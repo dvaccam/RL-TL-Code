@@ -243,14 +243,14 @@ def estimate_gradient(dataset, policy, task, weights=None, baseline_type=0):
 
 
 
-gamma = 0.95
+gamma = 0.995
 min_pos = -10.
 max_pos = 10.
 min_act = -1.0
 max_act = -min_act
 seed = 9876
-power_source = rescale_state(0.005)
-power_target = rescale_state(0.0055)
+power_source = rescale_state(0.001)
+power_target = rescale_state(0.0015)
 alpha_1_source = 0.
 alpha_2_source = 1.
 alpha_1_target = 1.
@@ -282,11 +282,16 @@ target_policy = pf.create_policy(alpha_1_target, alpha_2_target)
 
 #collect_episodes(source_task, 10, max_episode_length, seed, source_policy, True)
 
-'''J_1_r = calculate_J(source_task, source_policy, gamma)
-a = calculate_J(source_task, pf.create_policy(0., 0.), gamma)
-b = calculate_J(source_task, pf.create_policy(1., 1.), gamma)
-c = calculate_J(source_task, pf.create_policy(1., 0.), gamma)
-d = calculate_J(source_task, pf.create_policy(.5, .5), gamma)
+'''source_task.env.set_policy(pf.create_policy(0., 0.), gamma)
+a1 = source_task.env.J
+source_task.env.set_policy(pf.create_policy(1., 0.), gamma)
+a2 = source_task.env.J
+source_task.env.set_policy(pf.create_policy(1., 1.), gamma)
+a3 = source_task.env.J
+source_task.env.set_policy(pf.create_policy(0., 1.), gamma)
+a4 = source_task.env.J
+source_task.env.set_policy(pf.create_policy(.5, .5), gamma)
+a5 = source_task.env.J
 # Collecting source episodes
 print("Collecting", n_source_samples, "samples from source task...")
 source_samples = collect_samples(source_task, n_source_samples, seed, source_policy, False)
@@ -331,7 +336,7 @@ for target_size in list(range(10, 100, 10)) + list(range(100, 1000, 100)) + list
     results_noIS.append([alpha_1_target_opt, alpha_1_target_opt, J1_opt])
     print("No IS: TS", target_size, "a1", alpha_1_target_opt, "a2", alpha_2_target_opt, "J", J1_opt)
     #sys.stdout.flush()
-#np.save('learning_noIS_1', np.array(results_noIS))
+np.save('learning_noIS', np.array(results_noIS))
 
 '''results_J = []
 results_G = []
@@ -413,4 +418,4 @@ for target_size in list(range(10, 100, 10)) + list(range(100, 1000, 100)) + list
     J1_opt_transfer = target_task.env.J
     results_IS.append([alpha_1_target_opt_transfer, alpha_2_target_opt_transfer, J1_opt_transfer])
     print("IS: TS", target_size, "a1", alpha_1_target_opt_transfer, "a2", alpha_2_target_opt_transfer, "J", J1_opt_transfer)
-#np.save('learning_IS_1', np.array(results_IS))
+np.save('learning_IS', np.array(results_IS))

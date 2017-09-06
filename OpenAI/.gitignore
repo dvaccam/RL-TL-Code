@@ -4,5 +4,6 @@ gym/gym/*
 !gym/gym/envs/
 gym/gym/envs/*
 !gym/gym/envs/classic_control/
+!gym/gym/envs/registration.py
 gym/gym/envs/classic_control/*
 !gym/gym/envs/classic_control/*car.py
