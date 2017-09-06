@@ -2,7 +2,6 @@ import gym
 import numpy as np
 import math
 import time
-from scipy.stats import norm, beta
 import matplotlib.pyplot as plt
 from PolicyFactoryMC import PolicyFactoryMC, PolicyMC
 import multiprocessing as mp
@@ -13,37 +12,8 @@ import threading as thr
 import sys
 
 
-def norm_pdf(x, loc=0, scale=1.0):
-    return np.exp(((x - loc) / scale) ** 2) / (np.sqrt(2.0 * np.pi) * scale)
-
-
-
-def beta_pdf(x, mu, sigma2, l, u):
-    mu_std = (mu - l) / (u - l)
-    sigma2_std = sigma2 / ((u - l) ** 2)
-    a = (mu_std ** 2 - mu_std ** 3 - mu_std * sigma2_std) / sigma2_std
-    b = (1 - mu_std) * a / mu_std
-    return beta.pdf(x, a=a, b=b, loc=l, scale=u-l)
-
-
-
 def rescale_state(x):
     return x * (max_pos - min_pos) / 1.8
-
-
-
-def rescale_action(x):
-    return (max_act - min_act) * x / 2.0
-
-
-
-# Maps from [-1,1] to an appropriate mu in [min_act,max_act]
-def transform_to_mu_action(x):
-    mu = (max_act - min_act)*(x + 1)/2 + min_act
-    eps_act = rescale_action(1e-2)
-    mu_max = (min_act + max_act + np.sqrt((min_act + max_act) ** 2 - 4 * (min_act * max_act + action_noise ** 2))) / 2 - eps_act
-    mu_min = (min_act + max_act - np.sqrt((min_act + max_act) ** 2 - 4 * (min_act * max_act + action_noise ** 2))) / 2 + eps_act
-    return min(max(mu, mu_min), mu_max)
 
 
 
@@ -54,10 +24,7 @@ def _collect_sample(i, task, max_episode_length, policy, first_states, actions, 
     lock.release()
     first_state = init_state
     for t in range(max_episode_length):
-        # action = np.array([min(max(policy(first_state), min_act), max_act)])
         action = np.array([policy.produce_action(first_state)])
-        if np.any(task_c.env.state != first_state):
-            dfg=1
         next_state, reward, done, info = task_c.step(action)
         first_states[i*2*max_episode_length + 2*t], first_states[i*2*max_episode_length + 2*t + 1] = first_state
         actions[i*max_episode_length + t] = action
@@ -65,7 +32,6 @@ def _collect_sample(i, task, max_episode_length, policy, first_states, actions, 
         rewards[i*max_episode_length + t] = reward
         first_state = next_state
         if done:
-            # aux[i] = t
             break
     if t + 1 < max_episode_length:
         rewards[t + 1] = 1
@@ -97,7 +63,6 @@ def collect_samples(task, n_episodes, max_episode_length, seed, policy, render):
             for t in range(max_episode_length):
                 if render:
                     task.render()
-                #action = np.array([min(max(policy(first_state), min_act), max_act)])
                 action = np.array([policy.produce_action(first_state)])
                 next_state, reward, done, info = task.step(action)
                 first_states[i, t] = first_state
@@ -143,19 +108,12 @@ Issues:
 '''
 def calculate_density_ratios(dataset, source_task, target_task, source_policy, target_policy, source_episode_probs=None, target_episode_model_probs=None):
     mask = dataset[3] != 1
-    source_probs_cond = lambda samp: source_task.env.transition_model_pdf(samp[3:5], samp[:2], samp[2:3])*\
-                                     source_policy.action_pdf(samp[2:3], samp[:2]) if samp[5] != 1 else 1
-    target_probs_cond = lambda samp: target_task.env.transition_model_pdf(samp[3:5], samp[:2], samp[2:3])*\
-                                     target_policy.action_pdf(samp[2:3], samp[:2]) if samp[5] != 1 else 1
-    #st = time.time()
-    #samples = np.dstack(dataset)
     if source_episode_probs is None:
         source_sample_probs = np.ones((dataset[0].shape[0], dataset[0].shape[1]), dtype=np.float64)
         all_source_probs = source_task.env.transition_model_pdf(dataset[2][mask], dataset[0][mask],
                                                                 dataset[1][mask].reshape(-1, 1))
         all_source_probs *= source_policy.action_pdf(dataset[1][mask].reshape(-1, 1), dataset[0][mask])
         source_sample_probs[mask] = all_source_probs
-        #source_sample_probs = np.apply_along_axis(source_probs_cond, 2, samples)
         source_episode_probs = source_sample_probs.prod(axis=1)*(1/(source_task.env.max_initial_state - source_task.env.min_initial_state))
     if target_episode_model_probs is None:
         target_sample_probs = np.ones((dataset[0].shape[0], dataset[0].shape[1]), dtype=np.float64)
@@ -163,17 +121,12 @@ def calculate_density_ratios(dataset, source_task, target_task, source_policy, t
                                                                 dataset[1][mask].reshape(-1, 1))
         all_target_probs *= target_policy.action_pdf(dataset[1][mask].reshape(-1, 1), dataset[0][mask])
         target_sample_probs[mask] = all_target_probs
-        #target_sample_probs = np.apply_along_axis(target_probs_cond, 2, samples)
         target_episode_probs = target_sample_probs.prod(axis=1) * (1 / (target_task.env.max_initial_state - target_task.env.min_initial_state))
     else:
-        target_probs_pol_cond =  lambda samp: target_policy.action_pdf(samp[2:3], samp[:2]) if samp[5] != 1 else 1
         target_sample_pol_probs = np.ones((dataset[0].shape[0], dataset[0].shape[1]), dtype=np.float64)
         all_target_probs = target_policy.action_pdf(dataset[1][mask].reshape(-1, 1), dataset[0][mask])
         target_sample_pol_probs[mask] = all_target_probs
-        #target_sample_pol_probs = np.apply_along_axis(target_probs_pol_cond, 2, samples)
         target_episode_probs = target_sample_pol_probs.prod(axis=1)*target_episode_model_probs * (1 / (target_task.env.max_initial_state - target_task.env.min_initial_state))
-    #et = time.time()
-    #print(et-st)
     return target_episode_probs/source_episode_probs
 
 
@@ -187,8 +140,7 @@ def estimate_J(dataset, gamma, weights=None):
     if weights is not None:
         cumm_discounted_rewards *= weights
     J = cumm_discounted_rewards.mean()
-    variance = cumm_discounted_rewards.var()
-    return J, variance
+    return J
 
 
 
@@ -202,7 +154,7 @@ def optimize_parameters(target_size, target_task, pf, source_policy=None, source
     alpha1 = source_policy.alpha1 if source_policy is not None else np.random.uniform()
     alpha2 = source_policy.alpha2 if source_policy is not None else np.random.uniform()
 
-    while grad_norm > 1e-3 and i <= max_iters: #TODO: add baseline_type in estimate_gradient
+    while grad_norm > 1e-3 and i <= max_iters:
         alpha1 += step_size * grad[0]
         alpha2 += step_size * grad[1]
         alpha1 = max(min(alpha1, 1.0), 0.0)
@@ -247,19 +199,11 @@ def estimate_gradient(dataset, policy, weights=None, baseline_type=0):
     rewards[rewards == 1] = 0
     discounts = np.power(gamma, np.arange(rewards.shape[1]))
     cumm_discounted_rewards = rewards.dot(discounts)
-    #st = time.time()
     log_grads_sample = np.zeros((rewards.shape[0], rewards.shape[1], 2), dtype=np.float64)
     mask = dataset[-1] != 1
     all_grads = policy.log_gradient_paramaters(dataset[0][mask], dataset[1][mask].reshape((-1,1)))
     log_grads_sample[mask] = all_grads
-    #et = time.time()
-    #print(et-st)
-    #st = time.time()
-    '''samples = np.dstack(dataset)
-    log_grads_sample = np.apply_along_axis(lambda s: policy.log_gradient_paramaters(s[:2], s[2:3]), 2, samples)'''
     log_grads_episode = log_grads_sample.sum(axis=1)
-    #et = time.time()
-    #print(et-st)
     if log_grads_episode.shape[0] > 1:
         if baseline_type == 0:
             grad = (log_grads_episode.T * cumm_discounted_rewards).T
@@ -311,7 +255,7 @@ min_pos = -40.
 max_pos = 40.
 min_act = -1.0
 max_act = -min_act
-seed = 100#int(time.time())
+seed = 100
 power_source = rescale_state(0.005)
 power_target = rescale_state(0.0055)
 alpha_1_source = 0.
@@ -320,7 +264,7 @@ alpha_1_target = 1.
 alpha_2_target = 0.
 n_source_episodes = 20000
 n_target_episodes = 50000
-action_noise = (max_act - min_act)*0.2#rescale_action(2*0.05/5)
+action_noise = (max_act - min_act)*0.2
 max_episode_length = 200
 
 
@@ -422,7 +366,7 @@ d = estimate_J(s, gamma)'''
 
 #sys.stdout = open('out.log', 'w')
 
-'''results_noIS = []
+results_noIS = []
 for target_size in list(range(10, 100, 10)) + list(range(100, 1000, 100)) + list(range(1000, 10000+1, 1000)):#[1] + list(range(100, n_target_episodes+1, 100 )):
     alpha_1_target_opt, alpha_2_target_opt = optimize_parameters(target_size, target_task, pf)
     optimal_pi = pf.create_policy(alpha_1_target_opt, alpha_2_target_opt)
@@ -431,20 +375,9 @@ for target_size in list(range(10, 100, 10)) + list(range(100, 1000, 100)) + list
     results_noIS.append([alpha_1_target_opt, alpha_1_target_opt, J1_opt])
     print("No IS: TS", target_size, "a1", alpha_1_target_opt, "a2", alpha_2_target_opt, "J", J1_opt)
     #sys.stdout.flush()
-np.save('learning_noIS_1', np.array(results_noIS))'''
+np.save('learning_noIS_1', np.array(results_noIS))
 
-ts = collect_samples(target_task, 10000, max_episode_length, seed, target_policy, False)
-estimate_gradient(ts, target_policy, baseline_type=1)
 source_samples = collect_samples(source_task, int(5e4), max_episode_length, seed, source_policy, False)
-w = calculate_density_ratios(source_samples, source_task, target_task, source_policy, target_policy)
-for i in [1e4, 2e4, 3e4, 4e4, 5e4]:
-    g = estimate_gradient(source_samples[:int(i)], target_policy, weights=w[:int(i)], baseline_type=1)
-    target_samples = collect_samples(target_task, 10000, max_episode_length, seed, target_policy, False)
-    g1 = estimate_gradient(target_samples, target_policy, baseline_type=1)
-    print(g, g1)
-
-
-
 mask = source_samples[3] != 1
 source_sample_probs = np.ones((source_samples[0].shape[0], source_samples[0].shape[1]), dtype=np.float64)
 all_source_probs = source_task.env.transition_model_pdf(source_samples[2][mask], source_samples[0][mask],

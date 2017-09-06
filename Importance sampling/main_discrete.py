@@ -2,7 +2,6 @@ import gym
 import numpy as np
 import math
 import time
-from scipy.stats import norm, beta
 import matplotlib.pyplot as plt
 from PolicyFactoryMC import PolicyFactoryMC, PolicyMC
 import multiprocessing as mp
@@ -13,37 +12,9 @@ import threading as thr
 import sys
 
 
-def norm_pdf(x, loc=0, scale=1.0):
-    return np.exp(((x - loc) / scale) ** 2) / (np.sqrt(2.0 * np.pi) * scale)
-
-
-
-def beta_pdf(x, mu, sigma2, l, u):
-    mu_std = (mu - l) / (u - l)
-    sigma2_std = sigma2 / ((u - l) ** 2)
-    a = (mu_std ** 2 - mu_std ** 3 - mu_std * sigma2_std) / sigma2_std
-    b = (1 - mu_std) * a / mu_std
-    return beta.pdf(x, a=a, b=b, loc=l, scale=u-l)
-
-
 
 def rescale_state(x):
     return x * (max_pos - min_pos) / 1.8
-
-
-
-def rescale_action(x):
-    return (max_act - min_act) * x / 2.0
-
-
-
-# Maps from [-1,1] to an appropriate mu in [min_act,max_act]
-def transform_to_mu_action(x):
-    mu = (max_act - min_act)*(x + 1)/2 + min_act
-    eps_act = rescale_action(1e-2)
-    mu_max = (min_act + max_act + np.sqrt((min_act + max_act) ** 2 - 4 * (min_act * max_act + action_noise ** 2))) / 2 - eps_act
-    mu_min = (min_act + max_act - np.sqrt((min_act + max_act) ** 2 - 4 * (min_act * max_act + action_noise ** 2))) / 2 + eps_act
-    return min(max(mu, mu_min), mu_max)
 
 
 
@@ -54,10 +25,7 @@ def _collect_sample(i, task, max_episode_length, policy, first_states, actions, 
     lock.release()
     first_state = init_state
     for t in range(max_episode_length):
-        # action = np.array([min(max(policy(first_state), min_act), max_act)])
         action = np.array([policy.produce_action(first_state)])
-        if np.any(task_c.env.state != first_state):
-            dfg=1
         next_state, reward, done, info = task_c.step(action)
         first_states[i*2*max_episode_length + 2*t], first_states[i*2*max_episode_length + 2*t + 1] = first_state
         actions[i*max_episode_length + t] = action
@@ -65,7 +33,6 @@ def _collect_sample(i, task, max_episode_length, policy, first_states, actions, 
         rewards[i*max_episode_length + t] = reward
         first_state = next_state
         if done:
-            # aux[i] = t
             break
     if t + 1 < max_episode_length:
         rewards[t + 1] = 1
@@ -73,12 +40,11 @@ def _collect_sample(i, task, max_episode_length, policy, first_states, actions, 
 
 
 
-def collect_samples(task, n_samples, seed, policy, render):
+def collect_samples(task, n_samples, seed, policy):
     np.random.seed(seed)
     task.env._seed(seed)
     #counts = np.zeros(task.env.R.shape, dtype=np.float64)
     task.env.set_policy(policy, gamma)
-    #aux = np.zeros(n_episodes, dtype=np.int64)
     # Sampling from task
     if True:
         # Data structures for storing samples
@@ -108,10 +74,6 @@ def collect_samples(task, n_samples, seed, policy, render):
         next_states = np.frombuffer(next_states).reshape((n_episodes, max_episode_length, 2))
         rewards = np.frombuffer(rewards).reshape((n_episodes, max_episode_length))
 
-    #aux = next_states[:,:,0].max(axis=1)
-    #plt.hist(aux, bins='sqrt')
-    #plt.hist(aux[aux != 0], bins='sqrt')
-    #plt.show()
     #counts *= (1-gamma if gamma != 1 else 1.)/n_samples
     return (np.array(first_states), np.array(actions), np.array(next_states), np.array(rewards))
 
@@ -141,7 +103,6 @@ def collect_episodes(task, n_episodes, max_episode_length, seed, policy, render)
             for t in range(max_episode_length):
                 if render:
                     task.render()
-                #action = np.array([min(max(policy(first_state), min_act), max_act)])
                 action = np.array([policy.produce_action(first_state)])
                 next_state, reward, done, info = task.step(action)
                 first_states[i, t] = first_state
@@ -204,7 +165,7 @@ def estimate_J(dataset, gamma, task=None, weights=None):
         if weights is not None:
             rewards *= weights
         J = rewards.mean()/(1-gamma)
-        return J, 0
+        return J
     else:
         '''R = np.zeros(task.env.R.shape, dtype=np.float64)
         dseta = np.zeros(task.env.R.shape, dtype=np.float64)
@@ -220,7 +181,7 @@ def estimate_J(dataset, gamma, task=None, weights=None):
         action_idx = np.array([task.env.action_to_idx[a[0]] for a in dataset[1]])
         rewards = task.env.R[state_idx, action_idx]
         J = rewards.mean()/(1-gamma)
-        return J, 0
+        return J
 
 
 
@@ -288,7 +249,6 @@ def optimize_parameters(target_size, target_task, pf, source_policy=None, source
         grad /= grad_norm if grad_norm != 0 else 1
         i += 1
         step_size -= (0.01-0.001)/max_iters
-        #target_samples = collect_samples(target_task, 10000, max_episode_length, seed, pol, False)
     if i > max_iters:
         print("Did not converge")
         print(grad_norm, i)
@@ -300,7 +260,7 @@ def optimize_parameters(target_size, target_task, pf, source_policy=None, source
 def estimate_gradient(dataset, policy, task, weights=None, baseline_type=0):
     state_idx = np.array([task.env.state_to_idx[s[0]][s[1]] for s in dataset[0]])
     action_idx = np.array([task.env.action_to_idx[a[0]] for a in dataset[1]])
-    grads = policy.gradient_matrix[state_idx, action_idx]
+    grads = policy.log_gradient_matrix[state_idx, action_idx]
     Qs = task.env.Q[state_idx, action_idx]
     if baseline_type == 0:
         grad = (grads.T * Qs).T
@@ -353,12 +313,10 @@ alpha_1_source = 0.
 alpha_2_source = 1.
 alpha_1_target = 1.
 alpha_2_target = 0.
-n_source_episodes = 10000
 action_noise = (max_act - min_act)*0.2
 max_episode_length = 200
 n_source_samples = 10000
 n_target_samples = 5000
-
 n_action_bins = 10 + 1
 n_position_bins = 30 + 1
 n_velocity_bins = 30 + 1
@@ -381,13 +339,6 @@ source_policy = pf.create_policy(alpha_1_source, alpha_2_source)
 target_policy = pf.create_policy(alpha_1_target, alpha_2_target)
 
 #collect_episodes(source_task, 10, max_episode_length, seed, source_policy, True)
-
-'''xs = np.linspace(source_task.env.min_speed, source_task.env.max_speed, 1000)
-ys1 = [source_task.env.transition_model_pdf(np.array([0,x]), np.array([0,0]), np.array([max_act]), True)[1] for x in xs]
-ys2 = [target_task.env.transition_model_pdf(np.array([0,x]), np.array([0,0]), np.array([max_act]), True)[1] for x in xs]
-plt.plot(xs, ys1, 'b', xs, ys2, 'r')
-plt.show()'''
-
 
 '''J_1_r = calculate_J(source_task, source_policy, gamma)
 a = calculate_J(source_task, pf.create_policy(0., 0.), gamma)
@@ -423,40 +374,6 @@ weights = np.append(np.ones(10, dtype=np.float64), weights)
 J_1_is, var_J_1_is = estimate_J(transfer_samples, gamma, weights=weights)
 print("Estimated performance on target task with transfer:", J_1_is, "; empirical variance of estimate:", var_J_1_is)'''
 
-
-'''#r = np.load('results10000.npy')
-#r1 = np.load('results1000.npy')
-s = collect_samples(source_task, int(1000), 15, seed, source_policy, False)
-w = calculate_density_ratios(s, source_task, target_task, source_policy, target_policy)
-g = estimate_gradient(s, target_policy, weights=w)
-g1 = estimate_gradient(s, target_policy, weights=w, baseline_type=1)
-g2 = estimate_gradient(s, target_policy, weights=w, baseline_type=2)
-
-s = collect_samples(source_task, int(1000), 15, 100, source_policy, False)
-w = calculate_density_ratios(s, source_task, target_task, source_policy, target_policy)
-g_ = estimate_gradient(s, target_policy, weights=w)
-g1_ = estimate_gradient(s, target_policy, weights=w, baseline_type=1)
-g2_ = estimate_gradient(s, target_policy, weights=w, baseline_type=2)
-
-s = collect_samples(source_task, int(100000), 15, seed, source_policy, False)
-w = calculate_density_ratios(s, source_task, target_task, source_policy, target_policy)
-G = estimate_gradient(s, target_policy, weights=w)
-G1 = estimate_gradient(s, target_policy, weights=w, baseline_type=1)
-G2 = estimate_gradient(s, target_policy, weights=w, baseline_type=2)'''
-
-'''g = estimate_gradient(t, target_policy)
-g1 = estimate_gradient(t, target_policy, baseline_type=1)
-g2 = estimate_gradient(t, target_policy, baseline_type=2)
-
-t = collect_samples(target_task, int(1000), 10, 100, target_policy, False)
-g_ = estimate_gradient(t, target_policy)
-g1_ = estimate_gradient(t, target_policy, baseline_type=1)
-g2_ = estimate_gradient(t, target_policy, baseline_type=2)
-
-t = collect_samples(target_task, int(100000), 10, seed, target_policy, False)
-G = estimate_gradient(t, target_policy)
-G1 = estimate_gradient(t, target_policy, baseline_type=1)
-G2 = estimate_gradient(t, target_policy, baseline_type=2)'''
 #a = collect_samples(source_task, 10000, seed, source_policy, True)
 #b = collect_samples(target_task, 10000, 200, seed, target_policy, False)
 #w = calculate_density_ratios(a, source_task, target_task, source_policy, target_policy)
@@ -493,7 +410,7 @@ for j in range(25):
 
     J = calculate_J(target_task, target_policy, gamma)
     
-    g = target_policy.gradient_matrix.copy()
+    g = target_policy.log_gradient_matrix.copy()
     g = np.transpose(g, axes=(2, 0, 1)) * (target_task.env.Q*target_task.env.dseta_distr)
     g = np.transpose(g, axes=(1, 2, 0)).sum(axis=(0, 1))
     for i, size in enumerate([1e4, 2e4, 3e4, 4e4, 5e4, 1e5]):
