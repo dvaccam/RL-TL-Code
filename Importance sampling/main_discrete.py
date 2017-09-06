@@ -43,39 +43,8 @@ def _collect_sample(i, task, max_episode_length, policy, first_states, actions, 
 def collect_samples(task, n_samples, seed, policy):
     np.random.seed(seed)
     task.env._seed(seed)
-    #counts = np.zeros(task.env.R.shape, dtype=np.float64)
     task.env.set_policy(policy, gamma)
-    # Sampling from task
-    if True:
-        # Data structures for storing samples
-        first_states = []
-        actions = []
-        next_states = []
-        rewards = []
-        for i in range(n_samples):
-            first_state, action, next_state, reward = task.env.sample_step()
-            first_states.append(first_state)
-            actions.append(action)
-            next_states.append(next_state)
-            rewards.append(reward)
-            #counts[task.env.state_to_idx[first_state[0]][first_state[1]], task.env.action_to_idx[action[0]]] += 1
-    else:
-        first_states = sct.RawArray('d', np.zeros(n_episodes*max_episode_length*task.observation_space.shape[0], dtype=np.float64))
-        actions = sct.RawArray('d', np.zeros(n_episodes*max_episode_length, dtype=np.float64))
-        next_states = sct.RawArray('d', np.zeros(n_episodes*max_episode_length*task.observation_space.shape[0], dtype=np.float64))
-        rewards = sct.RawArray('d', np.ones(n_episodes*max_episode_length, dtype=np.float64))
-        lock = thr.Lock()
-        inps = [(i, task, max_episode_length, policy, first_states, actions, next_states, rewards, lock) for i in range(n_episodes)]
-        n_jobs = 2
-        pool = mp.dummy.Pool(n_jobs)
-        pool.starmap(_collect_sample, inps, chunksize=int(len(inps)/n_jobs))
-        first_states = np.frombuffer(first_states).reshape((n_episodes, max_episode_length, 2))
-        actions = np.frombuffer(actions).reshape((n_episodes, max_episode_length))
-        next_states = np.frombuffer(next_states).reshape((n_episodes, max_episode_length, 2))
-        rewards = np.frombuffer(rewards).reshape((n_episodes, max_episode_length))
-
-    #counts *= (1-gamma if gamma != 1 else 1.)/n_samples
-    return (np.array(first_states), np.array(actions), np.array(next_states), np.array(rewards))
+    return task.env.sample_step(n_samples, True)
 
 
 
@@ -148,8 +117,8 @@ Issues:
 '''
 def calculate_density_ratios(dataset, source_task, target_task, source_policy, target_policy, source_sample_probs=None):
     target_task.env.set_policy(target_policy, gamma)
-    state_idx = np.array([source_task.env.state_to_idx[s[0]][s[1]] for s in dataset[0]])
-    action_idx = np.array([source_task.env.action_to_idx[a[0]] for a in dataset[1]])
+    state_idx = dataset[4]
+    action_idx = dataset[5]
     if source_sample_probs is None:
         source_task.env.set_policy(source_policy, gamma)
         source_sample_probs = source_task.env.dseta_distr[state_idx, action_idx]
@@ -185,30 +154,6 @@ def estimate_J(dataset, gamma, task=None, weights=None):
 
 
 
-def calculate_J(task, policy, gamma):
-    P_pi = np.transpose(task.env.transition_matrix, axes=(2, 0, 1)).copy()
-    P_pi = (P_pi * policy.choice_matrix).sum(axis=2).T
-    R_pi = (task.env.R * policy.choice_matrix).sum(axis=1)
-    V = np.eye(task.env.transition_matrix.shape[0]) - gamma * P_pi
-    V = np.linalg.inv(V)
-    J = V.dot(R_pi).dot(task.env.initial_state_distr)
-    return J
-
-
-
-# Note: empirical discounted distribution of states and the delta (with terminal states going to themselves and zero-reward)
-# differ only in the terminal states, exactly because the ciclic transition is absent in the samples. This does not affect the
-# final result as such states have zero reward
-def calculate_delta_distr(task, policy, gamma):
-    P_pi_T = np.transpose(task.env.transition_matrix, axes=(2, 0, 1)).copy()
-    P_pi_T = (P_pi_T * policy.choice_matrix).sum(axis=2)
-    delta_distr = np.eye(task.env.transition_matrix.shape[0]) - gamma*P_pi_T
-    delta_distr = np.linalg.inv(delta_distr)
-    delta_distr = (1-gamma if gamma != 1 else 1)*delta_distr.dot(task.env.initial_state_distr)
-    return  delta_distr
-
-
-
 def optimize_parameters(target_size, target_task, pf, source_policy=None, source_samples=None, source_sample_probs=None):
     step_size = 0.01
     max_iters = 2000
@@ -225,7 +170,7 @@ def optimize_parameters(target_size, target_task, pf, source_policy=None, source
         alpha1 = max(min(alpha1, 1.0), 0.0)
         alpha2 = max(min(alpha2, 1.0), 0.0)
         pol = pf.create_policy(alpha1, alpha2)
-        target_samples = collect_samples(target_task, target_size, seed, pol, False)
+        target_samples = collect_samples(target_task, target_size, seed, pol)
         if source_samples is not None:
             weights = calculate_density_ratios(source_samples, source_task, target_task, source_policy, pol,
                                                source_sample_probs)
@@ -233,7 +178,9 @@ def optimize_parameters(target_size, target_task, pf, source_policy=None, source
             transfer_samples = (np.vstack((target_samples[0], source_samples[0])),
                                 np.vstack((target_samples[1], source_samples[1])),
                                 np.vstack((target_samples[2], source_samples[2])),
-                                np.concatenate((target_samples[3], source_samples[3])))
+                                np.concatenate((target_samples[3], source_samples[3])),
+                                np.concatenate((target_samples[4], source_samples[4])),
+                                np.concatenate((target_samples[5], source_samples[5])))
             grad = estimate_gradient(transfer_samples, pol, target_task, weights, baseline_type=1)
         else:
             grad = estimate_gradient(target_samples, pol, target_task, baseline_type=1)
@@ -258,8 +205,8 @@ def optimize_parameters(target_size, target_task, pf, source_policy=None, source
 
 # No need to calculate gradient of source samples on source model, we need gradient of source samples in target model only
 def estimate_gradient(dataset, policy, task, weights=None, baseline_type=0):
-    state_idx = np.array([task.env.state_to_idx[s[0]][s[1]] for s in dataset[0]])
-    action_idx = np.array([task.env.action_to_idx[a[0]] for a in dataset[1]])
+    state_idx = dataset[4]
+    action_idx = dataset[5]
     grads = policy.log_gradient_matrix[state_idx, action_idx]
     Qs = task.env.Q[state_idx, action_idx]
     if baseline_type == 0:
@@ -269,12 +216,7 @@ def estimate_gradient(dataset, policy, task, weights=None, baseline_type=0):
         grad = grad.mean(axis=0)
     if baseline_type == 1:
         grad = (grads.T * Qs).T
-        P_pi = np.transpose(task.env.transition_matrix, axes=(2, 0, 1)).copy()
-        P_pi = (P_pi * policy.choice_matrix).sum(axis=2).T
-        R_pi = (task.env.R * policy.choice_matrix).sum(axis=1)
-        V = np.eye(task.env.transition_matrix.shape[0]) - gamma * P_pi
-        V = np.linalg.inv(V).dot(R_pi)
-        baseline = V[state_idx]
+        baseline = task.env.V[state_idx]
         grad = grad - (grads.T*baseline).T
         if weights is not None:
             grad  = (grad .T * weights).T
@@ -384,7 +326,8 @@ results_noIS = []
 for target_size in list(range(10, 100, 10)) + list(range(100, 1000, 100)) + list(range(1000, 10000+1, 1000)):
     alpha_1_target_opt, alpha_2_target_opt = optimize_parameters(target_size, target_task, pf)
     optimal_pi = pf.create_policy(alpha_1_target_opt, alpha_2_target_opt)
-    J1_opt = calculate_J(target_task, optimal_pi, gamma)
+    target_task.env.set_policy(optimal_pi, gamma)
+    J1_opt = target_task.env.J
     results_noIS.append([alpha_1_target_opt, alpha_1_target_opt, J1_opt])
     print("No IS: TS", target_size, "a1", alpha_1_target_opt, "a2", alpha_2_target_opt, "J", J1_opt)
     #sys.stdout.flush()
@@ -456,7 +399,7 @@ print(results_G.var(axis=0))
 print(results_G_b1.var(axis=0))
 print(results_G_b2.var(axis=0))'''
 
-source_samples = collect_samples(source_task, n_source_samples, seed, source_policy, False)
+source_samples = collect_samples(source_task, n_source_samples, seed, source_policy)
 state_idx = np.array([source_task.env.state_to_idx[s[0]][s[1]] for s in source_samples[0]])
 action_idx = np.array([source_task.env.action_to_idx[a[0]] for a in source_samples[1]])
 source_sample_probs = source_task.env.dseta_distr[state_idx, action_idx]
@@ -466,7 +409,8 @@ for target_size in list(range(10, 100, 10)) + list(range(100, 1000, 100)) + list
     alpha_1_target_opt_transfer, alpha_2_target_opt_transfer =\
         optimize_parameters(target_size, target_task, pf, source_policy, source_samples, source_sample_probs)
     optimal_pi_transfer = pf.create_policy(alpha_1_target_opt_transfer, alpha_2_target_opt_transfer)
-    J1_opt_transfer = calculate_J(target_task, optimal_pi_transfer, gamma)
+    target_task.env.set_policy(optimal_pi_transfer)
+    J1_opt_transfer = target_task.env.J
     results_IS.append([alpha_1_target_opt_transfer, alpha_2_target_opt_transfer, J1_opt_transfer])
     print("IS: TS", target_size, "a1", alpha_1_target_opt_transfer, "a2", alpha_2_target_opt_transfer, "J", J1_opt_transfer)
 #np.save('learning_IS_1', np.array(results_IS))
