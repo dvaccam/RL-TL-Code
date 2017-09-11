@@ -43,6 +43,7 @@ class Continuous_MountainCarEnv(gym.Env):
         self.max_speed = self.rescale(0.07)
         self.min_speed = -self.max_speed
         self.goal_position = self.transform(0.45) # was 0.5 in gym, 0.45 in Arnaud de Broissia's version
+        self.bottom_position = self.transform(-0.5)
         self.power = power
         self.position_noise = (self.max_position - self.min_position)*position_noise
         self.velocity_noise = (self.max_speed - self.min_speed)*velocity_noise
@@ -60,6 +61,8 @@ class Continuous_MountainCarEnv(gym.Env):
             self.position_reps = (self.position_bins[:-1] + self.position_bins[1:]) / 2.
             self.velocity_reps = (self.velocity_bins[:-1] + self.velocity_bins[1:]) / 2.
             self.action_reps = (self.action_bins[:-1] + self.action_bins[1:]) / 2.
+            if np.all(self.position_reps < self.goal_position):
+                self.goal_position = self.position_reps[-1]
             self.build_model_matrices()
 
         self.low_state = np.array([self.min_position, self.min_speed])
@@ -254,12 +257,22 @@ class Continuous_MountainCarEnv(gym.Env):
 
 
 
-    def sample_step(self, n_samples=1, return_idx=False):
-        idx = np.random.choice(self.dseta_distr.size, p=self.dseta_distr.flatten(), size=n_samples)
-        state_idx = (idx / self.action_reps.shape[0]).astype(np.int64)
-        action_idx = (idx % self.action_reps.shape[0]).astype(np.int64)
+    def sample_step(self, n_samples=1, return_idx=False, include_terminal=True):
+        if include_terminal:
+            idx = np.random.choice(self.dseta_distr.size, p=self.dseta_distr.flatten(), size=n_samples)
+            state_idx = (idx / self.action_reps.shape[0]).astype(np.int64)
+            action_idx = (idx % self.action_reps.shape[0]).astype(np.int64)
+        else:
+            pos_mask = self.state_reps[:,0] < self.goal_position
+            dseta_aux = self.dseta_distr[pos_mask]
+            dseta_aux /= dseta_aux.sum()
+            idx = np.random.choice(dseta_aux.size, p=dseta_aux.flatten(), size=n_samples)
+            state_idx = (idx / self.action_reps.shape[0]).astype(np.int64)
+            num = int(pos_mask.sum()/self.action_reps.shape[0])
+            state_idx += (self.position_reps.shape[0]-num)*(state_idx / num).astype(np.int64)
+            action_idx = (idx % self.action_reps.shape[0]).astype(np.int64)
         first_states = self.state_reps[state_idx]
-        actions = np.array([self.action_reps[action_idx]])
+        actions = self.action_reps[action_idx].reshape((-1,1))
         next_state_idx = np.zeros(state_idx.shape[0], dtype=np.int64)
         for i in range(state_idx.shape[0]):
             next_state_idx[i] = np.random.choice(self.state_reps.shape[0], p=self.transition_matrix[state_idx[i], action_idx[i]])
@@ -418,24 +431,3 @@ class Continuous_MountainCarEnv(gym.Env):
 
     def restore(self, x):
         return  1.8 * x / (self.max_position - self.min_position)
-
-
-    def calculate_delta_distr(self):
-        P_pi_T = np.transpose(self.transition_matrix, axes=(2, 0, 1)).copy()
-        P_pi_T = (P_pi_T * self.policy.choice_matrix).sum(axis=2)
-        delta_distr = np.eye(self.transition_matrix.shape[0]) - self.gamma * P_pi_T
-        delta_distr = np.linalg.inv(delta_distr)
-        delta_distr = (1 - self.gamma if self.gamma != 1 else 1) * delta_distr.dot(self.initial_state_distr)
-        return delta_distr
-
-    def calculate_dseta_distr(self):
-        return (self.policy.choice_matrix.T * self.delta_distr).T
-
-
-
-    def calculate_Q(self):
-        P_pi = np.transpose(self.transition_matrix, axes=(2, 0, 1)).copy()
-        P_pi = (P_pi * self.policy.choice_matrix).sum(axis=2).T
-        Q = np.eye(self.state_reps.shape[0]) - self.gamma*P_pi
-        Q = np.linalg.inv(Q).dot(self.R)
-        return Q

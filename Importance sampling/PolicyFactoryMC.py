@@ -9,14 +9,18 @@ class PolicyMC:
         self.alpha1 = alpha1
         self.alpha2 = alpha2
         self.factory = factory
+        self.min_to_bot = self.factory.bottom_pos - self.factory.min_pos
+        self.bot_to_go = self.factory.max_pos - self.factory.bottom_pos
         if self.factory.model == 'S':
             self.build_choice_matrix()
             self.build_log_grad_matrix()
-        
+
 
 
     def produce_action(self, state):
-        mu = (self.alpha1*self.factory.max_act if state[1] >= 0 else -self.alpha2*self.factory.min_act) * state[1] / self.factory.max_speed
+        alp = self.alpha1*self.factory.max_act if state[1] >= 0 else -self.alpha2*self.factory.min_act
+        den_pos = self.min_to_bot if state[0] < self.factory.bottom_pos else self.bot_to_go
+        mu =  alp * (state[1] / self.factory.max_speed)# * (np.abs(state[0] - self.factory.bottom_pos) / den_pos)
         if self.factory.model == 'G':
             #return self.factory.max_act
             noise = np.random.randn()
@@ -47,7 +51,7 @@ class PolicyMC:
 
 
 
-    def log_gradient_paramaters(self, state, action):
+    def log_gradient_paramaters(self, state, action): #TODO: Update with new policy
         if state.size == 2 and action.size == 1:
             vel_norm = state[1] / self.factory.max_speed
             if state[1] >= 0:
@@ -68,7 +72,9 @@ class PolicyMC:
         self.choice_matrix = np.zeros((self.factory.state_reps.shape[0], self.factory.action_reps.shape[0]), dtype=np.float64)
         a1_mask = self.factory.state_reps[:,1] >= 0
         a2_mask = np.logical_not(a1_mask)
-        mu = (a1_mask * self.alpha1 + a2_mask * self.alpha2)*self.factory.state_reps[:,1] / self.factory.max_speed
+        den_mask = self.factory.state_reps[:,0] < self.factory.bottom_pos
+        den = den_mask * self.min_to_bot + np.logical_not(den_mask)*self.bot_to_go
+        mu = (a1_mask * self.alpha1 + a2_mask * self.alpha2)*(self.factory.state_reps[:,1] / self.factory.max_speed)#*(np.abs(self.factory.state_reps[:,0] - self.factory.bottom_pos)/den)
         self.choice_matrix[:,0] = (1 + erf((self.factory.action_bins[1] - mu)/(self.factory.action_noise*np.sqrt(2.))))/2.
         self.choice_matrix[:,-1] = (1 - erf((self.factory.action_bins[-2] - mu) / (self.factory.action_noise * np.sqrt(2.))))/2.
         mu_rep = np.dstack([mu]*(self.factory.action_reps.shape[0] - 2))
@@ -81,25 +87,32 @@ class PolicyMC:
         all_grads = np.zeros((self.factory.state_reps.shape[0], self.factory.action_reps.shape[0]), dtype=np.float64)
         a1_mask = self.factory.state_reps[:, 1] >= 0
         a2_mask = np.logical_not(a1_mask)
-        mu = (a1_mask * self.alpha1 + a2_mask * self.alpha2) * self.factory.state_reps[:, 1] / self.factory.max_speed
+        den_mask = self.factory.state_reps[:, 0] < self.factory.bottom_pos
+        den = den_mask * self.min_to_bot + np.logical_not(den_mask) * self.bot_to_go
         vel_norm = self.factory.state_reps[:, 1] / self.factory.max_speed
-        all_grads[:,0] = (-np.exp(-((mu - self.factory.action_bins[1])/self.factory.action_noise)**2)*vel_norm) / (self.factory.action_noise*np.sqrt(2*np.pi)*self.choice_matrix[:,0])
-        all_grads[:,-1] = (np.exp(-((mu - self.factory.action_bins[-2])/self.factory.action_noise) ** 2) * vel_norm) / (self.factory.action_noise * np.sqrt(2 * np.pi) * self.choice_matrix[:,-1])
+        dis_norm = np.abs(self.factory.state_reps[:, 0] - self.factory.bottom_pos) / den
+        dis_norm = 1.
+        mu = (a1_mask * self.alpha1 + a2_mask * self.alpha2) * vel_norm * dis_norm
+        all_grads[:,0] = (-np.exp(-((mu - self.factory.action_bins[1])/self.factory.action_noise)**2)*vel_norm*dis_norm) / (self.factory.action_noise*np.sqrt(2*np.pi)*self.choice_matrix[:,0])
+        all_grads[:,-1] = (np.exp(-((mu - self.factory.action_bins[-2])/self.factory.action_noise) ** 2) * vel_norm*dis_norm) / (self.factory.action_noise * np.sqrt(2 * np.pi) * self.choice_matrix[:,-1])
         mu_rep = np.hstack([mu.reshape((-1,1))] * (self.factory.action_reps.shape[0] - 2))
-        all_grads[:,1:-1] = ((-np.exp(-((mu_rep - self.factory.action_bins[2:-1])/self.factory.action_noise)**2) + np.exp(-((mu_rep - self.factory.action_bins[1:-2])/self.factory.action_noise)**2)).T*vel_norm).T/(self.factory.action_noise*np.sqrt(2*np.pi)*self.choice_matrix[:,1:-1])
+        all_grads[:,1:-1] = ((-np.exp(-((mu_rep - self.factory.action_bins[2:-1])/self.factory.action_noise)**2) + np.exp(-((mu_rep - self.factory.action_bins[1:-2])/self.factory.action_noise)**2)).T*vel_norm*dis_norm).T/(self.factory.action_noise*np.sqrt(2*np.pi)*self.choice_matrix[:,1:-1])
         self.log_gradient_matrix[a1_mask,:,0] = all_grads[a1_mask]
         self.log_gradient_matrix[a2_mask,:,1] = all_grads[a2_mask]
 
 
 
 class PolicyFactoryMC:
-    def __init__(self, model, action_noise, max_speed, min_act, max_act, action_bins=None, action_reps=None, state_reps=None,
+    def __init__(self, model, action_noise, max_speed, min_act, max_act, bottom_pos, min_pos, max_pos, action_bins=None, action_reps=None, state_reps=None,
                  state_to_idx=None):
         self.model = model
         self.action_noise = action_noise
         self.max_speed = max_speed
         self.min_act = min_act
         self.max_act = max_act
+        self.bottom_pos = bottom_pos
+        self.min_pos = min_pos
+        self.max_pos = max_pos
         self.action_bins = action_bins
         self.action_reps = action_reps
         self.state_reps = state_reps
