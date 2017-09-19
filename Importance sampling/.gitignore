@@ -6,3 +6,5 @@
 !main_discrete.py
 !PolicyFactoryMC.py
 !test.py
+!LSTD_Q_Estimator.py
+!LSTD_V_Estimator.py

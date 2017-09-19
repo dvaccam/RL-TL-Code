@@ -201,7 +201,7 @@ class Continuous_MountainCarEnv(gym.Env):
                 position += velocity
                 if (position > self.max_position): position = self.max_position
                 if (position < self.min_position): position = self.min_position
-                if (position <= self.position_bins[0] and velocity < 0): velocity = 0
+                if (position <= self.position_bins[1] and velocity < 0): velocity = 0
                 position, velocity = self.discretize_state(np.array([position, velocity]))
             return np.array([position, velocity])
         elif initial_state.ndim == 2 and action.ndim == 2:
@@ -219,7 +219,7 @@ class Continuous_MountainCarEnv(gym.Env):
                 velocities = np.clip(velocities, self.min_speed, self.max_speed)
                 positions += velocities
                 positions = np.clip(positions, self.min_position, self.max_position)
-                velocities[np.logical_and(positions <= self.position_bins[0], velocities < 0)] = 0
+                velocities[np.logical_and(positions <= self.position_bins[1], velocities < 0)] = 0
                 positions, velocities = self.discretize_state(np.vstack((positions, velocities)).T).T
         return np.vstack((positions, velocities)).T
 
@@ -253,35 +253,37 @@ class Continuous_MountainCarEnv(gym.Env):
         R_pi = (self.R* policy.choice_matrix).sum(axis=1)
         self.V = P_pi_inv.dot(R_pi)
         self.J = self.V.dot(self.initial_state_distr)
-        self.Q = P_pi_inv.dot(self.R)
+        self.Q = self.R + gamma*(self.transition_matrix*self.V).sum(axis=2)
 
 
 
-    def sample_step(self, n_samples=1, return_idx=False, include_terminal=True):
-        if include_terminal:
-            idx = np.random.choice(self.dseta_distr.size, p=self.dseta_distr.flatten(), size=n_samples)
-            state_idx = (idx / self.action_reps.shape[0]).astype(np.int64)
-            action_idx = (idx % self.action_reps.shape[0]).astype(np.int64)
-        else:
-            pos_mask = self.state_reps[:,0] < self.goal_position
-            dseta_aux = self.dseta_distr[pos_mask]
-            dseta_aux /= dseta_aux.sum()
-            idx = np.random.choice(dseta_aux.size, p=dseta_aux.flatten(), size=n_samples)
-            state_idx = (idx / self.action_reps.shape[0]).astype(np.int64)
-            num = int(pos_mask.sum()/self.action_reps.shape[0])
-            state_idx += (self.position_reps.shape[0]-num)*(state_idx / num).astype(np.int64)
-            action_idx = (idx % self.action_reps.shape[0]).astype(np.int64)
+    def sample_step(self, n_samples=1, return_idx=False, include_next_action=False):
+        idx = np.random.choice(self.dseta_distr.size, p=self.dseta_distr.flatten(), size=n_samples)
+        state_idx = (idx / self.action_reps.shape[0]).astype(np.int64)
+        action_idx = (idx % self.action_reps.shape[0]).astype(np.int64)
         first_states = self.state_reps[state_idx]
         actions = self.action_reps[action_idx].reshape((-1,1))
         next_state_idx = np.zeros(state_idx.shape[0], dtype=np.int64)
+        next_action_idx = next_state_idx.copy()
         for i in range(state_idx.shape[0]):
             next_state_idx[i] = np.random.choice(self.state_reps.shape[0], p=self.transition_matrix[state_idx[i], action_idx[i]])
+            next_action_idx[i] = np.random.choice(self.action_reps.shape[0], p=self.policy.choice_matrix[next_state_idx[i]])
         next_states = self.state_reps[next_state_idx]
+        next_actions = self.action_reps[next_action_idx]
         rewards = self.reward_model(first_states, actions, next_states)
         if return_idx:
-            return first_states, actions, next_states, rewards, state_idx, action_idx
+            if include_next_action:
+                return {'fs':first_states, 'a':actions, 'ns':next_states, 'na':next_actions, 'r':rewards,
+                        'fsi':state_idx, 'ai':action_idx, 'nsi':next_state_idx, 'nai':next_action_idx}
+            else:
+                return {'fs': first_states, 'a': actions, 'ns': next_states, 'r': rewards,
+                        'fsi': state_idx, 'ai': action_idx, 'nsi': next_state_idx}
         else:
-            return first_states, actions, next_states, rewards
+            if include_next_action:
+                return {'fs': first_states, 'a': actions, 'ns': next_states, 'na': next_actions, 'r': rewards}
+            else:
+                return {'fs': first_states, 'a': actions, 'ns': next_states, 'r': rewards}
+
 
 
     def transition_model_pdf(self, next_state, first_state, action, as_array=False):

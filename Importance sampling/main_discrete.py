@@ -6,6 +6,8 @@ import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
 from matplotlib import cm
 from PolicyFactoryMC import PolicyFactoryMC, PolicyMC
+from LSTD_Q_Estimator import LSTD_Q_Estimator
+from LSTD_V_Estimator import LSTD_V_Estimator
 import multiprocessing as mp
 import multiprocessing.sharedctypes as sct
 from multiprocessing.dummy import Pool
@@ -42,11 +44,11 @@ def _collect_sample(i, task, max_episode_length, policy, first_states, actions, 
 
 
 
-def collect_samples(task, n_samples, seed, policy, include_terminal=True):
+def collect_samples(task, n_samples, seed, policy):
     np.random.seed(seed)
     task.env._seed(seed)
     task.env.set_policy(policy, gamma)
-    return task.env.sample_step(n_samples, True, include_terminal)
+    return task.env.sample_step(n_samples, return_idx=True, include_next_action=True)
 
 
 
@@ -156,7 +158,8 @@ def estimate_J(dataset, gamma, task=None, weights=None):
 
 
 
-def optimize_parameters(target_size, target_task, pf, source_policy=None, source_samples=None, source_sample_probs=None):
+def optimize_parameters(target_size, target_task, pf, lstd_q, lstd_v, source_policy=None, source_samples=None,
+                        source_sample_probs=None):
     step_size = 0.01
     max_iters = 2000
     i = 1
@@ -185,8 +188,15 @@ def optimize_parameters(target_size, target_task, pf, source_policy=None, source
                                 np.concatenate((target_samples[5], source_samples[5])))
             grad = estimate_gradient(transfer_samples, pol, target_task, weights, baseline_type=1)
         else:
-            Q = estimate_Q(target_samples, gamma, pol)
-            grad = estimate_gradient(target_samples, pol, target_task, baseline_type=1)
+            if lstd_v is not None and lstd_q is not None:
+                lstd_q.fit(target_samples)
+                Qs = lstd_q.transform(target_samples['fs'], target_samples['a'])
+                lstd_v.fit(target_samples)
+                Vs = lstd_v.transform(target_samples['fs'])
+            else:
+                Qs = target_task.env.Q[target_samples['fsi'], target_samples['ai']]
+                Vs = target_task.env.V[target_samples['fsi']]
+            grad = estimate_gradient(target_samples, pol, Qs, Vs, baseline_type=1)
         '''if i % 100 == 0 or i == 1:
             J = calculate_J(target_task, pol, gamma)
             ts = collect_samples(target_task, 10000, seed, pol, False)
@@ -253,186 +263,27 @@ def estimate_Q_TD(dataset, gamma, policy, episodic, lam):
 
 
 
-def map_to_feature_space(s, a):
-    p1 = np.array([source_task.env.position_reps[0]])
-    p2 = np.array([source_task.env.position_reps[-1]])
-    p3 = np.array([(p2 + p1) / 2]).flatten()
-    v1 = np.array([source_task.env.velocity_reps[0]])
-    v2 = np.array([source_task.env.velocity_reps[-1]])
-    v3 = np.array([(v2 + v1) / 2]).flatten()
-    epsp = rescale_state(1.8 * 7)
-    epsv = rescale_state(.014 * 7)
-    if s.ndim == 2:
-        dp1 = np.abs(s[:,0] - p1)
-        dp2 = np.abs(s[:,0] - p2)
-        dp3 = np.abs(s[:,0] - p3)
-        dv1 = np.abs(s[:,1] - v1)
-        dv2 = np.abs(s[:,1] - v2)
-        dv3 = np.abs(s[:,1] - v3)
-        d = np.stack((dp1 ** 2 / epsp + dv1 ** 2 / epsv + 1, dp1 ** 2 / epsp + dv2 ** 2 / epsv + 1,
-                      dp2 ** 2 / epsp + dv1 ** 2 / epsv + 1, dp2 ** 2 / epsp + dv2 ** 2 / epsv + 1,
-                      dp3 ** 2 / epsp + dv3 ** 2 / (2 * epsv))).T
-        d = np.stack((np.exp(-dp1 ** 2 / epsp - dv1 ** 2 / epsv), np.exp(-dp1 ** 2 / epsp - dv2 ** 2 / epsv),
-                      np.exp(-dp2 ** 2 / epsp - dv1 ** 2 / epsv), np.exp(-dp2 ** 2 / epsp - dv2 ** 2 / epsv),
-                      dp3 ** 2 / epsp + dv3 ** 2 / (2 * epsv))).T
-        phi = np.hstack((1. / (1. + d[:, :-1]), (d[:, -1] / (1. + d[:, -1])).reshape((-1, 1))))[:, :-1]
-        phi = np.hstack((d[:, :-1], (d[:, -1] / (1. + d[:, -1])).reshape((-1, 1))))[:, :-1]
-    else:
-        dp1 = np.abs(s[0] - p1)
-        dp2 = np.abs(s[0] - p2)
-        dp3 = np.abs(s[0] - p3)
-        dv1 = np.abs(s[1] - v1)
-        dv2 = np.abs(s[1] - v2)
-        dv3 = np.abs(s[1] - v3)
-        d = np.array([dp1 ** 2 / epsp + dv1 ** 2 / epsv + 1, dp1 ** 2 / epsp + dv2 ** 2 / epsv + 1,
-                      dp2 ** 2 / epsp + dv1 ** 2 / epsv + 1, dp2 ** 2 / epsp + dv2 ** 2 / epsv + 1,
-                      dp3 ** 2 / epsp + dv3 ** 2 / (2 * epsv)]).flatten()
-        d = np.array([np.exp(-dp1 ** 2 / epsp - dv1 ** 2 / epsv), np.exp(-dp1 ** 2 / epsp - dv2 ** 2 / epsv),
-                      np.exp(-dp2 ** 2 / epsp - dv1 ** 2 / epsv), np.exp(-dp2 ** 2 / epsp - dv2 ** 2 / epsv),
-                      dp3 ** 2 / epsp + dv3 ** 2 / (2 * epsv)]).flatten()
-        phi = np.append(1. / (1. + d[:-1]), d[-1] / (1. + d[-1]))[:-1]
-        phi = np.append(d[:-1], d[-1] / (1. + d[-1]))[:-1]
-    return phi
-
-
-
-def estimate_Q_TD_fa(dataset, gamma, policy, episodic, lam):
-    n_feats = 4
-    theta = np.zeros(n_feats, dtype=np.float64)
-    theta = np.array([50., 50., 60., 60.])
-    A = np.zeros((n_feats,n_feats), dtype=np.float64)
-    b = np.zeros(n_feats, dtype=np.float64)
-    if episodic:
-        con = 1
-        for ep in range(dataset[0].shape[0]):
-            first_states = dataset[0][ep]
-            actions = dataset[1][ep]
-            next_states = dataset[2][ep]
-            rewards = dataset[3][ep]
-            for t in range(first_states.shape[0]):
-                if rewards[t] == 1.:
-                    break
-                con += 1
-                phi = map_to_feature_space(first_states[t], actions[t])
-                if t != first_states.shape[0] - 1 and rewards[t + 1] != 1.:
-                    phi_ns = map_to_feature_space(next_states[t], actions[t+1])
-                else:
-                    phi_ns = map_to_feature_space(next_states[t], policy.produce_action(next_states[t]))
-                if t == 0:
-                    z = phi.copy()
-                A += z.reshape((-1,1)).dot((phi - gamma*phi_ns).reshape((1,-1)))
-                b += z*rewards[t]
-                z = lam*gamma*z + phi_ns
-    else:
-        first_states = dataset[0]
-        actions = dataset[1]
-        next_states = dataset[2]
-        rewards = dataset[3]
-        dseta = np.zeros(source_task.env.R.shape, dtype=np.float64)
-        tm = np.zeros((source_task.env.state_reps.shape[0],
-                       source_task.env.action_reps.shape[0],
-                       source_task.env.state_reps.shape[0]), dtype=np.float64)
-        R = dseta.copy()
-        for t in range(first_states.shape[0]):
-            phi = map_to_feature_space(first_states[t], actions[t])
-            phi_ns = map_to_feature_space(next_states[t], policy.produce_action(next_states[t]))
-            if t == 0:
-                z = phi.copy()
-            else:
-                z = lam * gamma * z + phi
-            A += z.reshape((-1, 1)).dot((phi - gamma * phi_ns).reshape((1, -1)))
-            b += z * rewards[t]
-    theta = np.linalg.inv(A).dot(b)
-    print(theta)
-    def Q(s, a):
-        phi_s = map_to_feature_space(s, a)
-        return theta.dot(phi_s)
-    return Q
-
-
-
-def estimate_Q(dataset, gamma, policy):
-    next_state_idx = np.array([source_task.env.state_to_idx[s[0]][s[1]] for s in dataset[2]])
-    next_actions_idx = np.array([np.random.choice(policy.factory.action_reps.shape[0], p=policy.choice_matrix[ns])
-                                 for ns in next_state_idx])
-    lam = 0.7
-    phi = map_to_feature_space(dataset[0], dataset[1])
-    phi_next = map_to_feature_space(dataset[2], policy.factory.action_reps[next_actions_idx].reshape((-1,1)))
-    gl = np.power(gamma*lam, np.arange(next_state_idx.shape[0])[::-1])
-    z = (phi.T*gl).T.cumsum(axis=0)
-    r = dataset[3]
-    b = (z.T*r).T.mean(axis=0)
-    a = (phi - gamma*phi_next)
-    a = np.array([z[i].reshape((-1,1)).dot(a[i].reshape((1,-1))) for i in range(a.shape[0])]).mean(axis=0)
-    theta = np.linalg.inv(a).dot(b)
-    print(theta)
-    def Q(s, a):
-        phi_s = map_to_feature_space(s, a)
-        return theta.dot(phi_s)
-    return Q
-
-
-
-def estimate_Q1(dataset, gamma, policy):
-    next_state_idx = np.array([source_task.env.state_to_idx[s[0]][s[1]] for s in dataset[2]])
-    next_actions_idx = np.array([np.random.choice(policy.factory.action_reps.shape[0], p=policy.choice_matrix[ns])
-                                 for ns in next_state_idx])
-    phi = map_to_feature_space(dataset[0], dataset[1])
-    phi_next = map_to_feature_space(dataset[2], policy.factory.action_reps[next_actions_idx].reshape((-1,1)))
-    a = phi.T.dot(phi - gamma*phi_next)
-    r = dataset[3]
-    b = phi.T.dot(r)
-    theta = np.linalg.inv(a).dot(b)
-    print(theta)
-    def Q(s, a):
-        phi_s = map_to_feature_space(s, a)
-        return theta.dot(phi_s)
-    return Q
-
-
-
-def calculate_theta(task, gamma, policy):
-    task.env.set_policy(policy, gamma)
-    idx_grid = np.dstack(np.meshgrid(np.arange(task.env.state_reps.shape[0]), np.arange(task.env.action_reps.shape[0]), indexing='ij')).reshape(-1, 2)
-    phi = map_to_feature_space(task.env.state_reps[idx_grid[:, 0]],
-                              task.env.action_reps[idx_grid[:, 1]].reshape((-1,1)))
-    D = np.diag(task.env.dseta_distr.flatten())
-    dseta_pi = np.zeros((idx_grid.shape[0], idx_grid.shape[0]), dtype=np.float64)
-    for i in range(dseta_pi.shape[0]):
-        p = task.env.transition_matrix[idx_grid[i,0], idx_grid[i,1]]
-        for j in range(dseta_pi.shape[1]):
-            dseta_pi[i,j] = p[idx_grid[j,0]]*policy.choice_matrix[idx_grid[j,0], idx_grid[j,1]]
-    A = phi.T.dot(D.dot(phi - gamma*dseta_pi.dot(phi)))
-    R = task.env.R.flatten()
-    b = phi.T.dot(D.dot(R))
-    theta = np.linalg.inv(A).dot(b)
-    print(theta)
-    return theta
-
-
-
 
 # No need to calculate gradient of source samples on source model, we need gradient of source samples in target model only
-def estimate_gradient(dataset, policy, task, weights=None, baseline_type=0):
-    state_idx = dataset[4]
-    action_idx = dataset[5]
+def estimate_gradient(dataset, policy, Q, V, weights=None, baseline_type=0):
+    state_idx = dataset['fsi']
+    action_idx = dataset['ai']
     grads = policy.log_gradient_matrix[state_idx, action_idx]
-    Qs = task.env.Q[state_idx, action_idx]
     if baseline_type == 0:
-        grad = (grads.T * Qs).T
+        grad = (grads.T * Q).T
         if weights is not None:
             grad = (grad.T * weights).T
         grad = grad.mean(axis=0)
     if baseline_type == 1:
-        grad = (grads.T * Qs).T
-        baseline = task.env.V[state_idx]
+        grad = (grads.T * Q).T
+        baseline = V
         grad = grad - (grads.T*baseline).T
         if weights is not None:
             grad  = (grad .T * weights).T
         grad  = grad .mean(axis=0)
     if baseline_type == 2:
         den = grads ** 2
-        grad = (grads.T * Qs).T
+        grad = (grads.T * Q).T
         baseline = grad ** 2
         if weights is not None:
             baseline = (baseline.T * weights).T
@@ -458,24 +309,24 @@ max_pos = 10.
 min_act = -1.0
 max_act = -min_act
 seed = 9876
-power_source = rescale_state(0.5)
-power_target = rescale_state(0.2)
+power_source = rescale_state(0.002)
+power_target = rescale_state(0.002)
 alpha_1_source = 1.
-alpha_2_source = 1.
+alpha_2_source = 0.
 alpha_1_target = 1.
 alpha_2_target = 0.
 action_noise = (max_act - min_act)*0.2
 max_episode_length = 200
 n_source_samples = 10000
 n_target_samples = 5000
-n_action_bins = 4 + 1
-n_position_bins = 4 + 1
-n_velocity_bins = 4 + 1
+n_action_bins = 10 + 1
+n_position_bins = 30 + 1
+n_velocity_bins = 30 + 1
 
 # Creation of source task
 source_task = gym.make('MountainCarContinuous-v0', min_position=min_pos, max_position=max_pos, min_action=min_act,
                        max_action=max_act, power=power_source, seed=seed, model='S', discrete=True, n_position_bins=n_position_bins,
-                       n_velocity_bins=n_velocity_bins, n_action_bins=n_action_bins, position_noise=0.1, velocity_noise=0.1)
+                       n_velocity_bins=n_velocity_bins, n_action_bins=n_action_bins)
 # Creation of target task
 target_task = gym.make('MountainCarContinuous-v0', min_position=min_pos, max_position=max_pos, min_action=min_act,
                        max_action=max_act, power=power_target, seed=seed, model='S', discrete=True, n_position_bins=n_position_bins,
@@ -489,6 +340,11 @@ pf = PolicyFactoryMC(model='S', action_noise=action_noise, max_speed=source_task
 source_policy = pf.create_policy(alpha_1_source, alpha_2_source)
 # Defining target policy
 target_policy = pf.create_policy(alpha_1_target, alpha_2_target)
+
+lstd_q = LSTD_Q_Estimator(7, 7, 0, 0.1, True, gamma, 0., min_pos, max_pos, source_task.env.min_speed, source_task.env.max_speed,
+                          min_act, max_act)
+lstd_v = LSTD_V_Estimator(5, 5, 0.1, True, gamma, 0., min_pos, max_pos, source_task.env.min_speed, source_task.env.max_speed)
+#collect_episodes(source_task, 10, max_episode_length, seed, source_policy, True)
 
 '''source_task.env.set_policy(pf.create_policy(0., 0.), gamma)
 a1 = source_task.env.J
@@ -529,152 +385,52 @@ weights = np.append(np.ones(10, dtype=np.float64), weights)
 J_1_is, var_J_1_is = estimate_J(transfer_samples, gamma, weights=weights)
 print("Estimated performance on target task with transfer:", J_1_is, "; empirical variance of estimate:", var_J_1_is)'''
 
-'''source_task.env.set_policy(source_policy, gamma)
-m1 = source_task.env.state_reps[:,0] < source_task.env.goal_position
+m1 = source_task.env.state_reps[:,0] < source_task.env.max_position
 xs = source_task.env.state_reps[:,0][m1]
 ys = source_task.env.state_reps[:,1][m1]
-for act in range(n_action_bins-1):
+
+source_task.env.set_policy(source_policy, gamma)
+'''zs = source_task.env.V[m1].flatten()
+fig = plt.figure()
+ax = fig.add_subplot(111, projection='3d')
+aux = int(m1.sum() / source_task.env.velocity_reps.shape[0])
+sur = ax.plot_surface(xs.reshape((-1,aux)), ys.reshape((-1,aux)), zs.reshape((-1,aux)))
+plt.show()
+plt.close()
+for act in range(n_action_bins - 1):
     zs = source_task.env.Q[m1,act].flatten()
     fig = plt.figure()
     ax = fig.add_subplot(111, projection='3d')
-    aux = int(m1.sum() / source_task.env.action_reps.shape[0])
+    aux = int(m1.sum() / source_task.env.velocity_reps.shape[0])
     sur = ax.plot_surface(xs.reshape((-1,aux)), ys.reshape((-1,aux)), zs.reshape((-1,aux)))
 plt.show()
-
-xs = source_task.env.state_reps[:30,0]
-ys = source_task.env.action_reps
-xs, ys = np.dstack(np.meshgrid(xs, ys, indexing='ij')).reshape(-1, 2).T
-zs = source_task.env.Q[:30].flatten()
-fig = plt.figure()
-ax = fig.add_subplot(111, projection='3d')
-sur = ax.plot_wireframe(xs, ys, zs)
-#plt.show()
-
-xs = source_task.env.state_reps[450:450+30,0]
-ys = source_task.env.action_reps
-xs, ys = np.dstack(np.meshgrid(xs, ys, indexing='ij')).reshape(-1, 2).T
-zs = source_task.env.Q[450:450+30].flatten()
-fig = plt.figure()
-ax = fig.add_subplot(111, projection='3d')
-sur = ax.plot_wireframe(xs, ys, zs)
-#plt.show()
-
-xs = source_task.env.state_reps[-30:,0]
-ys = source_task.env.action_reps
-xs, ys = np.dstack(np.meshgrid(xs, ys, indexing='ij')).reshape(-1, 2).T
-zs = source_task.env.Q[-30:].flatten()
-fig = plt.figure()
-ax = fig.add_subplot(111, projection='3d')
-sur = ax.plot_wireframe(xs, ys, zs)
+plt.close()
+xs = source_task.env.state_reps[:,0]
+ys = source_task.env.state_reps[:,1]
+for act in range(n_action_bins - 1):
+    zs = source_task.env.dseta_distr[:,act].flatten()
+    fig = plt.figure()
+    ax = fig.add_subplot(111, projection='3d')
+    sur = ax.plot_surface(xs.reshape((n_velocity_bins-1,n_position_bins-1)),
+                          ys.reshape((n_velocity_bins-1,n_position_bins-1)),
+                          zs.reshape((n_velocity_bins-1,n_position_bins-1)))
 plt.show()'''
 
-m1 = source_task.env.state_reps[:,0] < source_task.env.goal_position
-xs = source_task.env.state_reps[:,0][m1]
-ys = source_task.env.state_reps[:,1][m1]
-theta = calculate_theta(source_task, gamma, source_policy)
-Q_opt = np.array([map_to_feature_space(source_task.env.state_reps[i], source_task.env.action_reps[j]).dot(theta)
-                    for i in np.arange(source_task.env.state_reps.shape[0])
-                    for j in np.arange(source_task.env.action_reps.shape[0])]).reshape(source_task.env.R.shape)
-for act in range(1):
-    zs = Q_opt[m1,act].flatten()
+for nk in range(2, 10+1):
+    for eps in np.arange(0.01, 1.01, 0.01):
+        lstd_v = LSTD_V_Estimator(nk, nk, eps, True, gamma, 0., min_pos, max_pos, source_task.env.min_speed, source_task.env.max_speed)
+        lstd_v.calculate_theta(source_task, source_policy)
+        V = lstd_v.transform(source_task.env.state_reps)
+        print(nk, eps, (((V - source_task.env.V) ** 2) * source_task.env.delta_distr).sum())
+for act in range(n_action_bins - 1):
+    zs = V[m1].flatten()
     fig = plt.figure()
     ax = fig.add_subplot(111, projection='3d')
-    aux = int(m1.sum() / source_task.env.action_reps.shape[0])
-    sur = ax.plot_surface(xs.reshape((-1, aux)), ys.reshape((-1, aux)), zs.reshape((-1, aux)))
-#plt.show()
-ds = collect_episodes(source_task, 1000, max_episode_length, seed, source_policy, False)
-Q_td = estimate_Q_TD(ds, gamma, source_policy, True, 0.)
-Q_f = estimate_Q_TD_fa(ds, gamma, source_policy, True, 0.)
-Q_td_fa = np.array([Q_f(source_task.env.state_reps[i], source_task.env.action_reps[j])
-                    for i in np.arange(source_task.env.state_reps.shape[0])
-                    for j in np.arange(source_task.env.action_reps.shape[0])]).reshape(source_task.env.R.shape)
-ds = collect_samples(source_task, 1000*50, seed, source_policy, include_terminal=True)
-Q_td1 = estimate_Q_TD(ds, gamma, source_policy, False, 0.)
-Q_f = estimate_Q_TD_fa(ds, gamma, source_policy, False, 0.)
-Q_td_fa1 = np.array([Q_f(source_task.env.state_reps[i], source_task.env.action_reps[j])
-                    for i in np.arange(source_task.env.state_reps.shape[0])
-                    for j in np.arange(source_task.env.action_reps.shape[0])]).reshape(source_task.env.R.shape)
-for act in range(1):
-    zs = Q_td[m1,act].flatten()
-    fig = plt.figure()
-    ax = fig.add_subplot(111, projection='3d')
-    aux = int(m1.sum() / source_task.env.action_reps.shape[0])
-    sur = ax.plot_surface(xs.reshape((-1, aux)), ys.reshape((-1, aux)), zs.reshape((-1, aux)))
-    zs = Q_td_fa[m1, act].flatten()
-    fig = plt.figure()
-    ax = fig.add_subplot(111, projection='3d')
-    aux = int(m1.sum() / source_task.env.action_reps.shape[0])
-    sur = ax.plot_surface(xs.reshape((-1, aux)), ys.reshape((-1, aux)), zs.reshape((-1, aux)))
-    zs = Q_td_fa1[m1, act].flatten()
-    fig = plt.figure()
-    ax = fig.add_subplot(111, projection='3d')
-    aux = int(m1.sum() / source_task.env.action_reps.shape[0])
+    ax.set_zlim(-30,120)
+    aux = int(m1.sum() / source_task.env.velocity_reps.shape[0])
     sur = ax.plot_surface(xs.reshape((-1, aux)), ys.reshape((-1, aux)), zs.reshape((-1, aux)))
 plt.show()
-Q_f = estimate_Q(ds, gamma, source_policy)
-Q = np.array([Q_f(source_task.env.state_reps[i], source_task.env.action_reps[j])
-              for i in np.arange(source_task.env.state_reps.shape[0])
-              for j in np.arange(source_task.env.action_reps.shape[0])]).reshape(source_task.env.R.shape)
-
-
-a = collect_samples(source_task, 1000*50, seed, source_policy, include_terminal=False)
-Q_f = estimate_Q(a, gamma, source_policy)
-Q = np.array([Q_f(source_task.env.state_reps[i], source_task.env.action_reps[j]) for i in np.arange(source_task.env.state_reps.shape[0]) for j in np.arange(source_task.env.action_reps.shape[0])]).reshape(source_task.env.R.shape)
-Q_f1 = estimate_Q1(a, gamma, source_policy)
-Q1 = np.array([Q_f1(source_task.env.state_reps[i], source_task.env.action_reps[j]) for i in np.arange(source_task.env.state_reps.shape[0]) for j in np.arange(source_task.env.action_reps.shape[0])]).reshape(source_task.env.R.shape)
-m1 = source_task.env.state_reps[:,0] < source_task.env.goal_position
-xs = source_task.env.state_reps[:,0][m1]
-ys = source_task.env.state_reps[:,1][m1]
-for act in range(1):
-    zs = Q[m1,act].flatten()
-    fig = plt.figure()
-    ax = fig.add_subplot(111, projection='3d')
-    aux = int(m1.sum() / source_task.env.action_reps.shape[0])
-    sur = ax.plot_surface(xs.reshape((-1, aux)), ys.reshape((-1, aux)), zs.reshape((-1, aux)))
-    zs = Q1[m1, act].flatten()
-    fig = plt.figure()
-    ax = fig.add_subplot(111, projection='3d')
-    aux = int(m1.sum() / source_task.env.action_reps.shape[0])
-    sur = ax.plot_surface(xs.reshape((-1, aux)), ys.reshape((-1, aux)), zs.reshape((-1, aux)))
-plt.show()
-
-a = collect_samples(source_task, 1000, seed, source_policy, include_terminal=False)
-Q_f = estimate_Q(a, gamma, source_policy)
-Q = np.array([Q_f(source_task.env.state_reps[i], source_task.env.action_reps[j]) for i in np.arange(source_task.env.state_reps.shape[0]) for j in np.arange(source_task.env.action_reps.shape[0])]).reshape(source_task.env.R.shape)
-Q_f1 = estimate_Q1(a, gamma, source_policy)
-Q1 = np.array([Q_f1(source_task.env.state_reps[i], source_task.env.action_reps[j]) for i in np.arange(source_task.env.state_reps.shape[0]) for j in np.arange(source_task.env.action_reps.shape[0])]).reshape(source_task.env.R.shape)
-
-for act in range(1):
-    zs = Q[m1,act].flatten()
-    fig = plt.figure()
-    ax = fig.add_subplot(111, projection='3d')
-    aux = int(m1.sum() / source_task.env.action_reps.shape[0])
-    sur = ax.plot_surface(xs.reshape((-1, aux)), ys.reshape((-1, aux)), zs.reshape((-1, aux)))
-    zs = Q1[m1, act].flatten()
-    fig = plt.figure()
-    ax = fig.add_subplot(111, projection='3d')
-    aux = int(m1.sum() / source_task.env.action_reps.shape[0])
-    sur = ax.plot_surface(xs.reshape((-1, aux)), ys.reshape((-1, aux)), zs.reshape((-1, aux)))
-plt.show()
-
-a = collect_samples(source_task, 10000, seed, source_policy, include_terminal=False)
-Q_f = estimate_Q(a, gamma, source_policy)
-Q = np.array([Q_f(source_task.env.state_reps[i], source_task.env.action_reps[j]) for i in np.arange(source_task.env.state_reps.shape[0]) for j in np.arange(source_task.env.action_reps.shape[0])]).reshape(source_task.env.R.shape)
-Q_f1 = estimate_Q1(a, gamma, source_policy)
-Q1 = np.array([Q_f1(source_task.env.state_reps[i], source_task.env.action_reps[j]) for i in np.arange(source_task.env.state_reps.shape[0]) for j in np.arange(source_task.env.action_reps.shape[0])]).reshape(source_task.env.R.shape)
-
-for act in range(1):
-    zs = Q[m1,act].flatten()
-    fig = plt.figure()
-    ax = fig.add_subplot(111, projection='3d')
-    aux = int(m1.sum() / source_task.env.action_reps.shape[0])
-    sur = ax.plot_surface(xs.reshape((-1, aux)), ys.reshape((-1, aux)), zs.reshape((-1, aux)))
-    zs = Q1[m1, act].flatten()
-    fig = plt.figure()
-    ax = fig.add_subplot(111, projection='3d')
-    aux = int(m1.sum() / source_task.env.action_reps.shape[0])
-    sur = ax.plot_surface(xs.reshape((-1, aux)), ys.reshape((-1, aux)), zs.reshape((-1, aux)))
-plt.show()
+plt.close()
 
 #b = collect_samples(target_task, 10000, 200, seed, target_policy, False)
 #w = calculate_density_ratios(a, source_task, target_task, source_policy, target_policy)
@@ -683,7 +439,7 @@ plt.show()
 
 results_noIS = []
 for target_size in list(range(10, 100, 10)) + list(range(100, 1000, 100)) + list(range(1000, 10000+1, 1000)):
-    alpha_1_target_opt, alpha_2_target_opt = optimize_parameters(target_size, target_task, pf)
+    alpha_1_target_opt, alpha_2_target_opt = optimize_parameters(target_size, target_task, pf, lstd_q, lstd_v)
     optimal_pi = pf.create_policy(alpha_1_target_opt, alpha_2_target_opt)
     target_task.env.set_policy(optimal_pi, gamma)
     J1_opt = target_task.env.J
