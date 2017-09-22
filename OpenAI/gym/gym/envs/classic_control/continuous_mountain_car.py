@@ -22,6 +22,9 @@ import numpy as np
 from scipy.stats import norm, beta
 from scipy.special import erf
 import time
+import multiprocessing as mp
+import multiprocessing.sharedctypes as sct
+from multiprocessing.dummy import Pool
 
 class Continuous_MountainCarEnv(gym.Env):
     metadata = {
@@ -263,13 +266,16 @@ class Continuous_MountainCarEnv(gym.Env):
         action_idx = (idx % self.action_reps.shape[0]).astype(np.int64)
         first_states = self.state_reps[state_idx]
         actions = self.action_reps[action_idx].reshape((-1,1))
-        next_state_idx = np.zeros(state_idx.shape[0], dtype=np.int64)
-        next_action_idx = next_state_idx.copy()
-        for i in range(state_idx.shape[0]):
-            next_state_idx[i] = np.random.choice(self.state_reps.shape[0], p=self.transition_matrix[state_idx[i], action_idx[i]])
-            next_action_idx[i] = np.random.choice(self.action_reps.shape[0], p=self.policy.choice_matrix[next_state_idx[i]])
+        cum_p = np.hstack((np.zeros((n_samples, 1), dtype=np.float64), self.transition_matrix[state_idx,action_idx,:].cumsum(axis=1)))
+        samps = np.random.random_sample(n_samples).reshape((-1,1))
+        next_state_idx = (cum_p <= samps).sum(axis=1) - 1
+        #assert np.all(next_state_idx >= 0)
+        cum_p = np.hstack((np.zeros((n_samples, 1), dtype=np.float64), self.policy.choice_matrix[next_state_idx, :].cumsum(axis=1)))
+        samps = np.random.random_sample(n_samples).reshape((-1, 1))
+        next_action_idx = (cum_p <= samps).sum(axis=1) - 1
+        #assert np.all(next_action_idx >= 0)
         next_states = self.state_reps[next_state_idx]
-        next_actions = self.action_reps[next_action_idx]
+        next_actions = self.action_reps[next_action_idx].reshape((-1,1))
         rewards = self.reward_model(first_states, actions, next_states)
         if return_idx:
             if include_next_action:

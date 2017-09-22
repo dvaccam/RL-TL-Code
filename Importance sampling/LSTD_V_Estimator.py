@@ -55,29 +55,62 @@ class LSTD_V_Estimator:
 
 
 
-    def fit_slow(self, dataset):
-        n_feats = self.pos_kernels + self.vel_kernels + self.fit_bias
+    def fit_slow(self, dataset, weights_d=None, weights_p=None, weights_r=None, phi_source=None, phi_ns_source=None):
+        n_feats = int((self.n_kernels_pos * self.n_kernels_vel) + self.fit_bias)
         A = np.zeros((n_feats, n_feats), dtype=np.float64)
         b = np.zeros(n_feats, dtype=np.float64)
 
-        first_states = dataset['fs']
-        next_states = dataset['ns']
+        if phi_source is not None and phi_ns_source is not None:
+            source_size = phi_source.shape[0]
+            first_states = dataset['fs'][:-source_size]
+            next_states = dataset['ns'][:-source_size]
+            phi = np.vstack((self.map_to_feature_space(first_states), phi_source))
+            phi_ns = np.vstack((self.map_to_feature_space(next_states), phi_ns_source))
+        else:
+            first_states = dataset['fs']
+            next_states = dataset['ns']
+            phi = self.map_to_feature_space(first_states)
+            phi_ns = self.map_to_feature_space(next_states)
+
         rewards = dataset['r']
-        phi = self.map_to_feature_space(first_states)
-        phi_ns = self.map_to_feature_space(next_states)
-        for t in range(first_states.shape[0]):
-            if t == 0:
-                z = phi.copy()
-            else:
-                z = self.lam * self.gamma * z + phi
-            A += z.reshape((-1, 1)).dot((phi - self.gamma * phi_ns).reshape((1, -1)))
-            b += z * rewards[t]
+
+        if self.lam == 0:
+            if weights_p is not None:
+                phi_ns *= weights_p.reshape((-1,1))
+            delta_phi = phi - self.gamma * phi_ns
+            if weights_d is not None:
+                delta_phi *= weights_d.reshape((-1,1))
+            A = phi.T.dot(delta_phi)
+            b = phi * rewards.reshape((-1,1))
+            if weights_r is not None:
+                b *= (weights_d * weights_r).reshape((-1, 1))
+            b = b.sum(axis=0)
+        else: #TODO: Optimize
+            if weights_d is None:
+                weights_d = np.ones(dataset['fs'].shape[0], dtype=np.float64)
+            if weights_p is None:
+                weights_p = np.ones(dataset['fs'].shape[0], dtype=np.float64)
+            if weights_r is None:
+                weights_r = np.ones(dataset['fs'].shape[0], dtype=np.float64)
+            for t in range(first_states.shape[0]):
+                if t == 0:
+                    z = phi[t].copy()
+                    w_z = 1.
+                else:
+                    z = self.lam * self.gamma * z + phi[t] #
+                    # w_z *= ratio of probs of going from phi[t-1] to phi[t] if lambda != 0. else 1.
+                A += w_z * z.reshape((-1, 1)).dot(weights_d[t]*(phi[t] - self.gamma * weights_p[t] * phi_ns[t]).reshape((1, -1)))
+                b += w_z * z * weights_r[t] * rewards[t]
         self.theta = np.linalg.pinv(A).dot(b)
 
 
 
-    def transform(self, s):
-        phi_s = self.map_to_feature_space(s)
+    def transform(self, s, phi_source=None):
+        if phi_source is not None:
+            source_size = phi_source.shape[0]
+            phi_s = np.vstack((self.map_to_feature_space(s[:-source_size]), phi_source))
+        else:
+            phi_s = self.map_to_feature_space(s)
         return phi_s.dot(self.theta)
 
 
