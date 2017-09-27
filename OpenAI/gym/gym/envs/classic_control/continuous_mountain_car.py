@@ -260,7 +260,7 @@ class Continuous_MountainCarEnv(gym.Env):
 
 
 
-    def sample_step(self, n_samples=1, return_idx=False, include_next_action=False):
+    def sample_step(self, n_samples=1):
         idx = np.random.choice(self.dseta_distr.size, p=self.dseta_distr.flatten(), size=n_samples)
         state_idx = (idx / self.action_reps.shape[0]).astype(np.int64)
         action_idx = (idx % self.action_reps.shape[0]).astype(np.int64)
@@ -277,18 +277,8 @@ class Continuous_MountainCarEnv(gym.Env):
         next_states = self.state_reps[next_state_idx]
         next_actions = self.action_reps[next_action_idx].reshape((-1,1))
         rewards = self.reward_model(first_states, actions, next_states)
-        if return_idx:
-            if include_next_action:
-                return {'fs':first_states, 'a':actions, 'ns':next_states, 'na':next_actions, 'r':rewards,
-                        'fsi':state_idx, 'ai':action_idx, 'nsi':next_state_idx, 'nai':next_action_idx}
-            else:
-                return {'fs': first_states, 'a': actions, 'ns': next_states, 'r': rewards,
-                        'fsi': state_idx, 'ai': action_idx, 'nsi': next_state_idx}
-        else:
-            if include_next_action:
-                return {'fs': first_states, 'a': actions, 'ns': next_states, 'na': next_actions, 'r': rewards}
-            else:
-                return {'fs': first_states, 'a': actions, 'ns': next_states, 'r': rewards}
+        return {'fs':first_states, 'a':actions, 'ns':next_states, 'na':next_actions, 'r':rewards,
+                'fsi':state_idx, 'ai':action_idx, 'nsi':next_state_idx, 'nai':next_action_idx}
 
 
 

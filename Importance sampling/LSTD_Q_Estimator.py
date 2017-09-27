@@ -86,31 +86,14 @@ class LSTD_Q_Estimator:
                   np.exp(-dp3 ** 2 / epsp - dv2 ** 2 / epsv),np.exp(-dp3 ** 2 / epsp - dv3 ** 2 / epsv)]).flatten()
             phi = np.append(d, 1.)'''
         return phi
-        
-        
-    
-    def fit(self, dataset):
-        phi = self.map_to_feature_space(dataset['fs'], dataset['a'])
-        phi_next = self.map_to_feature_space(dataset['ns'], dataset['na'])
-        if self.lam != 0:
-            exps = np.tri(dataset['fs'].shape[0], k=-1, dtype=np.float64).cumsum(axis=0)
-            gl = (np.power(self.gamma * self.lam, exps) * np.tri(dataset['fs'].shape[0], dtype=np.float64))
-        else:
-            gl = np.eye(dataset['fs'].shape[0], dtype=np.float64)
-        z = ((phi.T.reshape(phi.shape[1], 1, -1)) * gl).sum(axis=2).T
-        r = dataset['r']
-        b = (z.T * r).T.sum(axis=0)
-        A = (phi - self.gamma * phi_next)
-        A = np.array([z[i].reshape((-1, 1)).dot(A[i].reshape((1, -1))) for i in range(A.shape[0])]).sum(axis=0)
-        self.theta = np.linalg.pinv(A).dot(b)
 
 
 
-    def fit_slow(self, dataset, weights_d=None, weights_p=None, weights_r=None, phi_source=None, phi_ns_source=None): #Direct transfer works here because reward function is the same
+    def fit(self, dataset, weights_d=None, weights_p=None, weights_r=None,
+            phi_source=None, phi_ns_source=None, predict=False): #Direct transfer works here because reward function is the same
         n_feats = int(self.n_kernels_pos * self.n_kernels_vel * (self.n_kernels_act if self.n_kernels_act != 0 else 1.) + self.fit_bias)
         A = np.zeros((n_feats, n_feats), dtype=np.float64)
         b = np.zeros(n_feats, dtype=np.float64)
-
 
         if phi_source is not None and phi_ns_source is not None:
             source_size = phi_source.shape[0]
@@ -130,17 +113,15 @@ class LSTD_Q_Estimator:
         rewards = dataset['r']
 
         if self.lam == 0:
-            if weights_p is not None:
-                phi_ns *= weights_p.reshape((-1,1))
             delta_phi = phi - self.gamma * phi_ns
-            if weights_d is not None:
-                delta_phi *= weights_d.reshape((-1,1))
+            if weights_d is not None and weights_p is not None:
+                delta_phi *= (weights_d * weights_p).reshape((-1,1))
             A = phi.T.dot(delta_phi)
             b = phi * rewards.reshape((-1,1))
             if weights_r is not None:
                 b *= (weights_d * weights_r).reshape((-1,1))
             b = b.sum(axis=0)
-        else: #TODO: Optimize
+        else: #TODO: Optimize + correct weightening
             if weights_d is None:
                 weights_d = np.ones(dataset['fs'].shape[0], dtype=np.float64)
             if weights_p is None:
@@ -157,10 +138,29 @@ class LSTD_Q_Estimator:
                 A += w_z * z.reshape((-1, 1)).dot(weights_d[t]*(phi[t] - self.gamma * weights_p[t] * phi_ns[t]).reshape((1, -1)))
                 b += w_z * z * weights_r[t] * rewards[t]
         self.theta = np.linalg.pinv(A).dot(b)
+        if predict:
+            return phi.dot(self.theta)
 
 
 
-    def transform(self, s, a, phi_source=None):
+    def fit2(self, dataset):
+        phi = self.map_to_feature_space(dataset['fs'], dataset['a'])
+        phi_next = self.map_to_feature_space(dataset['ns'], dataset['na'])
+        if self.lam != 0:
+            exps = np.tri(dataset['fs'].shape[0], k=-1, dtype=np.float64).cumsum(axis=0)
+            gl = (np.power(self.gamma * self.lam, exps) * np.tri(dataset['fs'].shape[0], dtype=np.float64))
+        else:
+            gl = np.eye(dataset['fs'].shape[0], dtype=np.float64)
+        z = ((phi.T.reshape(phi.shape[1], 1, -1)) * gl).sum(axis=2).T
+        r = dataset['r']
+        b = (z.T * r).T.sum(axis=0)
+        A = (phi - self.gamma * phi_next)
+        A = np.array([z[i].reshape((-1, 1)).dot(A[i].reshape((1, -1))) for i in range(A.shape[0])]).sum(axis=0)
+        self.theta = np.linalg.pinv(A).dot(b)
+
+
+
+    def predict(self, s, a, phi_source=None):
         if phi_source is not None:
             source_size = phi_source.shape[0]
             phi_s = np.vstack((self.map_to_feature_space(s[:-source_size], a[:-source_size]), phi_source))

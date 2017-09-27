@@ -48,7 +48,7 @@ class PolicyMC:
 
 
 
-    def log_gradient_paramaters(self, state, action): #TODO: Update with new policy
+    def log_gradient_paramaters(self, state, action):
         if state.size == 2 and action.size == 1:
             vel_norm = state[1] / self.factory.max_speed
             if state[1] >= 0:
@@ -94,16 +94,13 @@ class PolicyMC:
 
 
 class PolicyFactoryMC:
-    def __init__(self, model, action_noise, max_speed, min_act, max_act, bottom_pos, min_pos, max_pos, action_bins=None, action_reps=None, state_reps=None,
+    def __init__(self, model, action_noise, max_speed, min_act, max_act, action_bins=None, action_reps=None, state_reps=None,
                  state_to_idx=None):
         self.model = model
         self.action_noise = action_noise
         self.max_speed = max_speed
         self.min_act = min_act
         self.max_act = max_act
-        self.bottom_pos = bottom_pos
-        self.min_pos = min_pos
-        self.max_pos = max_pos
         self.action_bins = action_bins
         self.action_reps = action_reps
         self.state_reps = state_reps
