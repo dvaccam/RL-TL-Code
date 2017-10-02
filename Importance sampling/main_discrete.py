@@ -9,7 +9,8 @@ from PolicyFactoryMC import PolicyFactoryMC, PolicyMC
 from LSTD_Q_Estimator import LSTD_Q_Estimator
 from LSTD_V_Estimator import LSTD_V_Estimator
 from GradientEstimator import GradientEstimator
-from Learner import Learner
+from ISLearner import ISLearner
+from BatchLearner import BatchLearner
 import multiprocessing as mp
 import multiprocessing.sharedctypes as sct
 from multiprocessing.dummy import Pool
@@ -175,14 +176,14 @@ def estimate_Q_TD(dataset, gamma, policy, episodic, lam):
 
 
 
-
+# Try: source task 0.2; source policy (0. 1.); different seed
 gamma = 0.99
 min_pos = -10.
 max_pos = 10.
 min_act = -1.0
 max_act = -min_act
 seed = 9876
-power_sources = [rescale_state(0.0015), rescale_state(0.007), rescale_state(0.0002)]
+power_sources = [rescale_state(0.2), rescale_state(0.007), rescale_state(0.0015)]
 power_target = rescale_state(0.002)
 alpha_1_sources = [0., 0., 0.]
 alpha_2_sources = [0., 0., 0.]
@@ -198,8 +199,8 @@ n_velocity_bins = 20 + 1
 
 # Creation of source tasks
 source_tasks = [gym.make('MountainCarContinuous-v0', min_position=min_pos, max_position=max_pos, min_action=min_act,
-                       max_action=max_act, power=power_source, seed=seed, model='S', discrete=True, n_position_bins=n_position_bins,
-                       n_velocity_bins=n_velocity_bins, n_action_bins=n_action_bins, position_noise=0.025, velocity_noise=0.025)
+                         max_action=max_act, power=power_source, seed=seed, model='S', discrete=True, n_position_bins=n_position_bins,
+                         n_velocity_bins=n_velocity_bins, n_action_bins=n_action_bins, position_noise=0.025, velocity_noise=0.025)
                 for power_source in power_sources]
 # Creation of target task
 target_task = gym.make('MountainCarContinuous-v0', min_position=min_pos, max_position=max_pos, min_action=min_act,
@@ -218,6 +219,24 @@ lstd_q = LSTD_Q_Estimator(7, 7, 2, 0.45, True, gamma, 0., min_pos, max_pos, targ
                           min_act, max_act)
 lstd_v = LSTD_V_Estimator(6, 6, 0.2, True, gamma, 0., min_pos, max_pos, target_task.env.min_speed, target_task.env.max_speed)
 grad_est = GradientEstimator(baseline_type=1)
+
+'''xs = source_tasks[0].env.state_reps[:,0]
+ys = source_tasks[0].env.state_reps[:,1]
+target_task.env.set_policy(target_policy, gamma)
+source_tasks[0].env.set_policy(source_policies[0], gamma)
+for act in range(n_action_bins - 1):
+    zs = source_tasks[0].env.dseta_distr[:, act].flatten()
+    fig = plt.figure()
+    ax = fig.add_subplot(111, projection='3d')
+    aux = int(source_tasks[0].env.state_reps.shape[0] / source_tasks[0].env.velocity_reps.shape[0])
+    sur = ax.plot_surface(xs.reshape((-1, aux)), ys.reshape((-1, aux)), zs.reshape((-1, aux)))
+    zs = target_task.env.dseta_distr[:, act].flatten()
+    fig = plt.figure()
+    ax = fig.add_subplot(111, projection='3d')
+    aux = int(source_tasks[0].env.state_reps.shape[0] / source_tasks[0].env.velocity_reps.shape[0])
+    sur = ax.plot_surface(xs.reshape((-1, aux)), ys.reshape((-1, aux)), zs.reshape((-1, aux)))
+plt.show()
+plt.close()'''
 
 '''epis = collect_episodes(source_task, 10000, max_episode_length, seed, source_policy, False)
 J1 = estimate_J(epis, gamma)
@@ -250,50 +269,49 @@ target_task.env.set_policy(pf.create_policy(.5, .5), gamma)
 b5 = target_task.env.J
 print(b1, b2, b3, b4, b5)'''
 
-'''a = collect_samples(source_task, 10000, seed, source_policy)
-w = calculate_density_ratios_dseta(a, source_task, target_task, source_policy, target_policy)
-w2 = calculate_density_ratios_transition_sa(a, source_task, target_task, source_policy, target_policy)
-w3 = calculate_density_ratios_delta(a, source_task, target_task, source_policy, target_policy)
-w4 = calculate_density_ratios_transition_s(a, source_task, target_task, source_policy, target_policy)'''
+'''learner = Learner(gamma, pf, lstd_q, lstd_v, grad_est, seed)
+a = learner.collect_samples(source_tasks[0], n_source_samples[0], source_policies[0])
+w = learner.calculate_density_ratios_dseta(a, source_tasks[0], target_task, source_policies[0], target_policy)
+w2 = learner.calculate_density_ratios_transition_sa(a, source_tasks[0], target_task, source_policies[0], target_policy)
+w3 = learner.calculate_density_ratios_delta(a, source_tasks[0], target_task, source_policies[0], target_policy)
+w4 = learner.calculate_density_ratios_transition_s(a, source_tasks[0], target_task, source_policies[0], target_policy)
+w5 = learner.calculate_density_ratios_r_sa(a, source_tasks[0], target_task, source_policies[0], target_policy)
+w6 = learner.calculate_density_ratios_r_s(a, source_tasks[0], target_task, source_policies[0], target_policy)
+g = target_policy.log_gradient_matrix.copy()
+g = np.transpose(g, axes=(2, 0, 1)) * (target_task.env.Q * target_task.env.dseta_distr)
+g = np.transpose(g, axes=(1, 2, 0)).sum(axis=(0, 1))
+Qs = lstd_q.fit(a, predict=True, weights_d=w, weights_p=w2, weights_r=w5)
+Vs = lstd_v.fit(a, predict=True, weights_d=w3, weights_p=w4, weights_r=w6)
+grad = grad_est.estimate_gradient(a, target_policy, weights=w, Q=Qs, V=Vs)
+print(grad, g)'''
 
 target_sizes = list(range(200, 1000, 200)) + list(range(1000, 10000, 1000)) + list(range(10000, 50000 + 1, 10000))
-n_runs = 5
+n_runs = 1
 out_logger = open('results.log', 'w', buffering=1)
-
-for i in range(len(source_tasks)):
+for i in [0]:#range(len(source_tasks)):
     print("Task:", power_sources[i], file=out_logger)
     print("IS app", file=out_logger)
-    learner = Learner(gamma, pf, lstd_q, lstd_v, grad_est, seed)
-    results_IS_app = learner.learn(target_task, target_sizes, n_runs, [source_tasks[i]], [source_policies[i]], [n_source_samples[i]], out_logger)
-    np.save('learning_IS_app_' + str(i+1), np.array(results_IS_app))
+    learner = ISLearner(gamma, pf, lstd_q, lstd_v, grad_est, seed)
+    learner.learn(target_task, target_sizes, n_runs, [source_tasks[i]], [source_policies[i]], [n_source_samples[i]], out_logger)
+    #np.save('learning_IS_app_' + str(i+1), np.array(results_IS_app))
 
-    print("No IS app", file=out_logger)
-    learner = Learner(gamma, pf, lstd_q, lstd_v, grad_est, seed)
-    results_noIS_app = learner.learn(target_task, target_sizes, n_runs, None, None, None, out_logger)
-    np.save('learning_noIS_app_' + str(i+1), np.array(results_noIS_app))
-
-    print("IS", file=out_logger)
+    '''print("IS", file=out_logger)
     learner = Learner(gamma, pf, None, None, grad_est, seed)
     results_IS = learner.learn(target_task, target_sizes, n_runs, [source_tasks[i]], [source_policies[i]], [n_source_samples[i]], out_logger)
-    np.save('learning_IS_' + str(i+1), np.array(results_IS))
-
-    print("No IS", file=out_logger)
-    learner = Learner(gamma, pf, None, None, grad_est, seed)
-    results_noIS = learner.learn(target_task, target_sizes, n_runs, None, None, None, out_logger)
-    np.save('learning_noIS_' + str(i+1), np.array(results_noIS))
+    np.save('learning_IS_' + str(i+1), np.array(results_IS))'''
 
 print("All tasks", file=out_logger)
 print("IS app", file=out_logger)
-learner = Learner(gamma, pf, lstd_q, lstd_v, grad_est, seed)
-results_IS_app = learner.learn(target_task, target_sizes, n_runs, source_tasks, source_policies, n_source_samples, out_logger)
-np.save('learning_IS_app', np.array(results_IS_app))
+learner = ISLearner(gamma, pf, lstd_q, lstd_v, grad_est, seed)
+learner.learn(target_task, target_sizes, n_runs, source_tasks, source_policies, n_source_samples, out_logger)
+#np.save('learning_IS_app', np.array(results_IS_app))
 
-print("No IS app", file=out_logger)
+'''print("No IS app", file=out_logger)
 learner = Learner(gamma, pf, lstd_q, lstd_v, grad_est, seed)
 results_noIS_app = learner.learn(target_task, target_sizes, n_runs, None, None, None, out_logger)
-np.save('learning_noIS_app', np.array(results_noIS_app))
+np.save('learning_noIS_app', np.array(results_noIS_app))'''
 
-print("IS", file=out_logger)
+'''print("IS", file=out_logger)
 learner = Learner(gamma, pf, None, None, grad_est, seed)
 results_IS = learner.learn(target_task, target_sizes, n_runs, source_tasks, source_policies, n_source_samples, out_logger)
 np.save('learning_IS', np.array(results_IS))
@@ -301,4 +319,4 @@ np.save('learning_IS', np.array(results_IS))
 print("No IS", file=out_logger)
 learner = Learner(gamma, pf, None, None, grad_est, seed)
 results_noIS = learner.learn(target_task, target_sizes, n_runs, None, None, None, out_logger)
-np.save('learning_noIS', np.array(results_noIS))
+np.save('learning_noIS', np.array(results_noIS))'''

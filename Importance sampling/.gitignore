@@ -9,6 +9,6 @@
 !LSTD_Q_Estimator.py
 !LSTD_V_Estimator.py
 !GradientEstimator.py
-!Learner.py
+!*Learner.py
 !learning*.jpg
 !Learning.xlsx

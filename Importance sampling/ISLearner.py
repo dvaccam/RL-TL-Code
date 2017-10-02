@@ -4,7 +4,7 @@ import time
 
 
 
-class Learner:
+class ISLearner:
     def __init__(self, gamma, policy_factory, q_estimator, v_estimator, gradient_estimator, seed):
         self.gamma = gamma
         self.policy_factory = policy_factory
@@ -12,6 +12,7 @@ class Learner:
         self.v_estimator = v_estimator
         self.gradient_estimator = gradient_estimator
         self.initial_seed = seed
+        self.seed = seed
 
 
 
