@@ -2,7 +2,7 @@ import numpy as np
 import time
 
 class LSTD_Q_Estimator:
-    
+
     def __init__(self, n_kernels_pos, n_kernels_vel, n_kernels_act, eps, fit_bias, gamma, lam, min_pos, max_pos, min_vel,
                  max_vel, min_act, max_act):
         self.n_kernels_pos = n_kernels_pos
@@ -29,9 +29,9 @@ class LSTD_Q_Estimator:
                                             np.arange(self.act_kernels.shape[0]),
                                             indexing='ij'))
         self.idx_cube = np.transpose(self.idx_cube, axes=(1, 2, 3, 0)).reshape((-1, 3))
-        
-        
-        
+
+
+
     def map_to_feature_space(self, s, a):
         if s.ndim == 2:
             dists_p = (s[:, 0].reshape((-1, 1)) - self.pos_kernels.reshape((1, -1))) / (self.max_pos - self.min_pos)
@@ -89,8 +89,7 @@ class LSTD_Q_Estimator:
 
 
 
-    def fit(self, dataset, weights_d=None, weights_p=None, weights_r=None,
-            phi_source=None, phi_ns_source=None, predict=False): #Direct transfer works here because reward function is the same
+    def fit(self, dataset, weights=None, phi_source=None, phi_ns_source=None, predict=False): #Direct transfer works here because reward function is the same
         n_feats = int(self.n_kernels_pos * self.n_kernels_vel * (self.n_kernels_act if self.n_kernels_act != 0 else 1.) + self.fit_bias)
         A = np.zeros((n_feats, n_feats), dtype=np.float64)
         b = np.zeros(n_feats, dtype=np.float64)
@@ -114,14 +113,14 @@ class LSTD_Q_Estimator:
 
         if self.lam == 0:
             delta_phi = phi - self.gamma * phi_ns
-            if weights_d is not None and weights_p is not None:
-                delta_phi *= (weights_d * weights_p).reshape((-1,1))
+            if weights is not None:
+                delta_phi *= weights.reshape((-1,1))
             A = phi.T.dot(delta_phi)
             b = phi * rewards.reshape((-1,1))
-            if weights_r is not None:
-                b *= (weights_d * weights_r).reshape((-1,1))
+            if weights is not None:
+                b *= weights.reshape((-1,1))
             b = b.sum(axis=0)
-        else: #TODO: Optimize + correct weightening
+        '''else: #TODO: Optimize + correct weightening
             if weights_d is None:
                 weights_d = np.ones(dataset['fs'].shape[0], dtype=np.float64)
             if weights_p is None:
@@ -136,7 +135,7 @@ class LSTD_Q_Estimator:
                     z = self.lam * self.gamma * z + phi[t] #
                     # w_z *= ratio of probs of going from phi[t-1] to phi[t] if lambda != 0. else 1.
                 A += w_z * z.reshape((-1, 1)).dot(weights_d[t]*(phi[t] - self.gamma * weights_p[t] * phi_ns[t]).reshape((1, -1)))
-                b += w_z * z * weights_r[t] * rewards[t]
+                b += w_z * z * weights_r[t] * rewards[t]'''
         self.theta = np.linalg.pinv(A).dot(b)
         if predict:
             return phi.dot(self.theta)

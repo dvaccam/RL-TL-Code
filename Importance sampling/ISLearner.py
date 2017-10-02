@@ -20,6 +20,17 @@ class ISLearner:
               out_stream=sys.stdout):
         self.seed = self.initial_seed
         self.out_stream = out_stream
+        if self.q_estimator is not None and self.v_estimator is not None:
+            if source_tasks is not None:
+                print("Transfer app", file=self.out_stream)
+            else:
+                print("No transfer app", file=self.out_stream)
+        else:
+            if source_tasks is not None:
+                print("Transfer", file=self.out_stream)
+            else:
+                print("No transfer", file=self.out_stream)
+
         results = np.zeros((n_runs, len(n_target_samples), 3), dtype=np.float64)
         for run_idx in range(n_runs):
             print("Run:", run_idx+1, file=self.out_stream)
@@ -28,11 +39,8 @@ class ISLearner:
 
             source_samples = None
             source_samples_probs_dseta = None
-            source_samples_probs_p_sa = None
-            source_samples_probs_r_sa = None
-            source_samples_probs_delta = None
-            source_samples_probs_p_s = None
-            source_samples_probs_r_s = None
+            source_samples_probs_p = None
+            source_samples_probs_pi = None
             phi_source_q = None
             phi_ns_source_q = None
             phi_source_v = None
@@ -42,11 +50,8 @@ class ISLearner:
                 source_samples = []
                 source_samples_probs_dseta = []
                 if self.v_estimator is not None and self.q_estimator is not None:
-                    source_samples_probs_p_sa = []
-                    source_samples_probs_r_sa = []
-                    source_samples_probs_delta = []
-                    source_samples_probs_p_s = []
-                    source_samples_probs_r_s = []
+                    source_samples_probs_p = []
+                    source_samples_probs_pi = []
                     phi_source_q = []
                     phi_ns_source_q = []
                     phi_source_v = []
@@ -56,11 +61,8 @@ class ISLearner:
                     source_samples.append(samples)
                     source_samples_probs_dseta.append(source_tasks[i].env.dseta_distr[samples['fsi'], samples['ai']])
                     if self.v_estimator is not None and self.q_estimator is not None:
-                        source_samples_probs_p_sa.append(source_tasks[i].env.transition_matrix[samples['fsi'], samples['ai'], samples['nsi']] * source_policies[i].choice_matrix[samples['nsi'], samples['nai']])
-                        source_samples_probs_r_sa.append(source_tasks[i].env.transition_matrix[samples['fsi'], samples['ai'], samples['nsi']])
-                        source_samples_probs_delta.append(source_tasks[i].env.delta_distr[samples['fsi']])
-                        source_samples_probs_p_s.append((source_policies[i].choice_matrix[samples['fsi'], :] * source_tasks[i].env.transition_matrix[samples['fsi'], :,samples['nsi']]).sum(axis=1))
-                        source_samples_probs_r_s.append(source_policies[i].choice_matrix[samples['fsi'], samples['ai']] * source_tasks[i].env.transition_matrix[samples['fsi'], samples['ai'], samples['nsi']])
+                        source_samples_probs_p.append(source_tasks[i].env.transition_matrix[samples['fsi'], samples['ai'], samples['nsi']])
+                        source_samples_probs_pi.append(source_policies[i].choice_matrix[samples['nsi'], samples['nai']])
                         phi_source_q.append(self.q_estimator.map_to_feature_space(samples['fs'], samples['a']))
                         phi_ns_source_q.append(self.q_estimator.map_to_feature_space(samples['ns'], samples['na']))
                         phi_source_v.append(self.v_estimator.map_to_feature_space(samples['fs']))
@@ -76,8 +78,7 @@ class ISLearner:
                 alpha_1_target_opt, alpha_2_target_opt =\
                     self.optimize_policy_parameters(target_size, target_task,
                         source_samples, source_tasks, source_policies,
-                        source_samples_probs_dseta, source_samples_probs_p_sa, source_samples_probs_r_sa,
-                        source_samples_probs_delta, source_samples_probs_p_s, source_samples_probs_r_s,
+                        source_samples_probs_dseta, source_samples_probs_p, source_samples_probs_pi,
                         phi_source_q, phi_ns_source_q, phi_source_v, phi_ns_source_v)
                 optimal_pi = self.policy_factory.create_policy(alpha_1_target_opt, alpha_2_target_opt)
                 target_task.env.set_policy(optimal_pi, self.gamma)
@@ -88,8 +89,7 @@ class ISLearner:
 
 
     def optimize_policy_parameters(self, target_size, target_task, source_samples=None, source_tasks=None, source_policies=None,
-                                   source_sample_probs_dseta=None, source_sample_probs_p_sa=None, source_sample_probs_r_sa=None,
-                                   source_sample_probs_delta=None, source_sample_probs_p_s=None, source_sample_probs_r_s=None,
+                                   source_sample_probs_dseta=None, source_sample_probs_p=None, source_sample_probs_pi=None,
                                    phi_source_q=None, phi_ns_source_q=None, phi_source_v=None, phi_ns_source_v=None):
         step_size = 0.01
         max_iters = 2000
@@ -111,39 +111,24 @@ class ISLearner:
             if source_samples is not None:
                 weights_dseta = [np.ones(target_size, np.float64)]
                 if self.v_estimator is not None and self.q_estimator is not None:
-                    weights_p_sa = [np.ones(target_size, np.float64)]
-                    weights_r_sa = [np.ones(target_size, np.float64)]
-                    weights_delta = [np.ones(target_size, np.float64)]
-                    weights_p_s = [np.ones(target_size, np.float64)]
-                    weights_r_s = [np.ones(target_size, np.float64)]
+                    weights_p = [np.ones(target_size, np.float64)]
+                    weights_pi = [np.ones(target_size, np.float64)]
                 for i in range(len(source_samples)):
                     weights_dseta.append(self.calculate_density_ratios_dseta(source_samples[i], source_tasks[i], target_task,
                                                                              source_policies[i], pol,
                                                                              source_sample_probs_dseta[i]))
                     if self.v_estimator is not None and self.q_estimator is not None:
-                        weights_p_sa.append(self.calculate_density_ratios_transition_sa(source_samples[i], source_tasks[i], target_task,
-                                                                                        source_policies[i], pol,
-                                                                                        source_sample_probs_p_sa[i]))
-                        weights_r_sa.append(self.calculate_density_ratios_r_sa(source_samples[i], source_tasks[i], target_task,
+                        weights_p.append(self.calculate_density_ratios_transition(source_samples[i], source_tasks[i], target_task,
+                                                                                  source_policies[i], pol,
+                                                                                  source_sample_probs_p[i]))
+                        weights_pi.append(self.calculate_density_ratios_policy(source_samples[i], source_tasks[i], target_task,
                                                                                source_policies[i], pol,
-                                                                               source_sample_probs_r_sa[i]))
-                        weights_delta.append(self.calculate_density_ratios_delta(source_samples[i], source_tasks[i], target_task,
-                                                                                 source_policies[i], pol,
-                                                                                 source_sample_probs_delta[i]))
-                        weights_p_s.append(self.calculate_density_ratios_transition_s(source_samples[i], source_tasks[i], target_task,
-                                                                                      source_policies[i], pol,
-                                                                                      source_sample_probs_p_s[i]))
-                        weights_r_s.append(self.calculate_density_ratios_r_s(source_samples[i], source_tasks[i], target_task,
-                                                                             source_policies[i], pol,
-                                                                             source_sample_probs_r_s[i]))
+                                                                               source_sample_probs_pi[i]))
 
                 weights_dseta = np.concatenate(weights_dseta)
                 if self.v_estimator is not None and self.q_estimator is not None:
-                    weights_p_sa = np.concatenate(weights_p_sa)
-                    weights_r_sa = np.concatenate(weights_r_sa)
-                    weights_delta = np.concatenate(weights_delta)
-                    weights_p_s = np.concatenate(weights_p_s)
-                    weights_r_s = np.concatenate(weights_r_s)
+                    weights_p = np.concatenate(weights_p)
+                    weights_pi = np.concatenate(weights_pi)
 
                 transfer_samples = {'fs': np.vstack([target_samples['fs']] + [ss['fs'] for ss in source_samples]),
                                   'a': np.vstack([target_samples['a']] + [ss['a'] for ss in source_samples]),
@@ -156,10 +141,10 @@ class ISLearner:
                                   'nai': np.concatenate([target_samples['nai']] + [ss['nai'] for ss in source_samples])}
                 if self.v_estimator is not None and self.q_estimator is not None:
                     Qs = self.q_estimator.fit(transfer_samples, predict=True,
-                                              weights_d=weights_dseta, weights_p=weights_p_sa, weights_r=weights_r_sa,
+                                              weights=weights_dseta*weights_p*weights_pi,
                                               phi_source=phi_source_q, phi_ns_source=phi_ns_source_q)
                     Vs = self.v_estimator.fit(transfer_samples, predict=True,
-                                              weights_d=weights_delta, weights_p=weights_p_s, weights_r=weights_r_s,
+                                              weights=weights_dseta*weights_p,
                                               phi_source=phi_source_v, phi_ns_source=phi_ns_source_v)
                 else:
                     Qs = target_task.env.Q[transfer_samples['fsi'], transfer_samples['ai']]
@@ -178,9 +163,9 @@ class ISLearner:
             grad_norm = np.linalg.norm(grad)
             iter += 1
             step_size -= (0.01 - 0.001) / max_iters
-        #if iter > max_iters:
-        #    self.out_logger.write("Did not converge")
-        #    self.out_logger.write(grad_norm, iter)
+        if iter > max_iters:
+            self.out_stream.write("Did not converge")
+            self.out_stream.write(grad_norm, iter)
         return alpha1, alpha2
 
 
@@ -191,8 +176,8 @@ class ISLearner:
         task.env.set_policy(policy, self.gamma)
         return task.env.sample_step(n_samples)
 
-    
-    
+
+
     def calculate_density_ratios_dseta(self, dataset, source_task, target_task, source_policy, target_policy,
                                        source_sample_probs=None):
         target_task.env.set_policy(target_policy, self.gamma)
@@ -206,27 +191,8 @@ class ISLearner:
 
 
 
-    def calculate_density_ratios_transition_sa(self, dataset, source_task, target_task, source_policy, target_policy,
-                                               source_sample_probs=None):
-        target_task.env.set_policy(target_policy, self.gamma)
-        state_idx = dataset['fsi']
-        action_idx = dataset['ai']
-        next_state_idx = dataset['nsi']
-        next_action_idx = dataset['nai']
-        if source_sample_probs is None:
-            source_task.env.set_policy(source_policy, self.gamma)
-            source_sample_probs = \
-                source_task.env.transition_matrix[state_idx, action_idx, next_state_idx] * source_policy.choice_matrix[
-                    next_state_idx, next_action_idx]
-        target_sample_probs = \
-            target_task.env.transition_matrix[state_idx, action_idx, next_state_idx] * target_policy.choice_matrix[
-                next_state_idx, next_action_idx]
-        return target_sample_probs / source_sample_probs
-
-
-
-    def calculate_density_ratios_r_sa(self, dataset, source_task, target_task, source_policy, target_policy,
-                                      source_sample_probs=None):
+    def calculate_density_ratios_transition(self, dataset, source_task, target_task, source_policy, target_policy,
+                                            source_sample_probs=None):
         target_task.env.set_policy(target_policy, self.gamma)
         state_idx = dataset['fsi']
         action_idx = dataset['ai']
@@ -239,45 +205,13 @@ class ISLearner:
 
 
 
-    def calculate_density_ratios_delta(self, dataset, source_task, target_task, source_policy, target_policy,
-                                       source_sample_probs=None):
+    def calculate_density_ratios_policy(self, dataset, source_task, target_task, source_policy, target_policy,
+                                        source_sample_probs=None):
         target_task.env.set_policy(target_policy, self.gamma)
-        state_idx = dataset['fsi']
-        if source_sample_probs is None:
-            source_task.env.set_policy(source_policy, self.gamma)
-            source_sample_probs = source_task.env.delta_distr[state_idx]
-        target_sample_probs = target_task.env.delta_distr[state_idx]
-        return target_sample_probs / source_sample_probs
-
-
-
-    def calculate_density_ratios_transition_s(self, dataset, source_task, target_task, source_policy, target_policy,
-                                              source_sample_probs=None):
-        target_task.env.set_policy(target_policy, self.gamma)
-        state_idx = dataset['fsi']
         next_state_idx = dataset['nsi']
+        next_action_idx = dataset['nai']
         if source_sample_probs is None:
             source_task.env.set_policy(source_policy, self.gamma)
-            source_sample_probs = \
-                (source_policy.choice_matrix[state_idx, :] * source_task.env.transition_matrix[state_idx, :,
-                                                             next_state_idx]).sum(axis=1)
-        target_sample_probs = \
-            (target_policy.choice_matrix[state_idx, :] * target_task.env.transition_matrix[state_idx, :,
-                                                         next_state_idx]).sum(axis=1)
-        return target_sample_probs / source_sample_probs
-
-
-
-    def calculate_density_ratios_r_s(self, dataset, source_task, target_task, source_policy, target_policy,
-                                     source_sample_probs=None):
-        target_task.env.set_policy(target_policy, self.gamma)
-        state_idx = dataset['fsi']
-        action_idx = dataset['ai']
-        next_state_idx = dataset['nsi']
-        if source_sample_probs is None:
-            source_task.env.set_policy(source_policy, self.gamma)
-            source_sample_probs = source_policy.choice_matrix[state_idx, action_idx] * \
-                                  source_task.env.transition_matrix[state_idx, action_idx, next_state_idx]
-        target_sample_probs = target_policy.choice_matrix[state_idx, action_idx] * target_task.env.transition_matrix[
-            state_idx, action_idx, next_state_idx]
+            source_sample_probs = source_policy.choice_matrix[next_state_idx, next_action_idx]
+        target_sample_probs = target_policy.choice_matrix[next_state_idx, next_action_idx]
         return target_sample_probs / source_sample_probs

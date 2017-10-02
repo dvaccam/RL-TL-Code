@@ -18,6 +18,17 @@ class BatchLearner:
     def learn(self, target_task, n_target_samples, n_runs=1, source_tasks=None, source_policies=None, out_stream=sys.stdout):
         self.seed = self.initial_seed
         self.out_stream = out_stream
+        if self.q_estimator is not None and self.v_estimator is not None:
+            if source_tasks is not None:
+                print("Transfer app", file=self.out_stream)
+            else:
+                print("No transfer app", file=self.out_stream)
+        else:
+            if source_tasks is not None:
+                print("Transfer", file=self.out_stream)
+            else:
+                print("No transfer", file=self.out_stream)
+
         results = np.zeros((n_runs, len(n_target_samples), 3), dtype=np.float64)
         for run_idx in range(n_runs):
             print("Run:", run_idx + 1, file=self.out_stream)
@@ -153,9 +164,9 @@ class BatchLearner:
             grad_norm = np.linalg.norm(grad)
             iter += 1
             step_size -= (0.01 - 0.001) / max_iters
-        # if iter > max_iters:
-        #    self.out_logger.write("Did not converge")
-        #    self.out_logger.write(grad_norm, iter)
+        if iter > max_iters:
+            self.out_logger.write("Did not converge")
+            self.out_logger.write(grad_norm, iter)
         return alpha1, alpha2
 
 

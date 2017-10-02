@@ -176,7 +176,6 @@ def estimate_Q_TD(dataset, gamma, policy, episodic, lam):
 
 
 
-# Try: source task 0.2; source policy (0. 1.); different seed
 gamma = 0.99
 min_pos = -10.
 max_pos = 10.
@@ -286,37 +285,32 @@ grad = grad_est.estimate_gradient(a, target_policy, weights=w, Q=Qs, V=Vs)
 print(grad, g)'''
 
 target_sizes = list(range(200, 1000, 200)) + list(range(1000, 10000, 1000)) + list(range(10000, 50000 + 1, 10000))
-n_runs = 1
-out_logger = open('results.log', 'w', buffering=1)
-for i in [0]:#range(len(source_tasks)):
-    print("Task:", power_sources[i], file=out_logger)
-    print("IS app", file=out_logger)
-    learner = ISLearner(gamma, pf, lstd_q, lstd_v, grad_est, seed)
-    learner.learn(target_task, target_sizes, n_runs, [source_tasks[i]], [source_policies[i]], [n_source_samples[i]], out_logger)
-    #np.save('learning_IS_app_' + str(i+1), np.array(results_IS_app))
+n_runs = 10
 
-    '''print("IS", file=out_logger)
-    learner = Learner(gamma, pf, None, None, grad_est, seed)
-    results_IS = learner.learn(target_task, target_sizes, n_runs, [source_tasks[i]], [source_policies[i]], [n_source_samples[i]], out_logger)
-    np.save('learning_IS_' + str(i+1), np.array(results_IS))'''
-
-print("All tasks", file=out_logger)
-print("IS app", file=out_logger)
+out_stream = open('IS.log', 'w', buffering=1)
 learner = ISLearner(gamma, pf, lstd_q, lstd_v, grad_est, seed)
-learner.learn(target_task, target_sizes, n_runs, source_tasks, source_policies, n_source_samples, out_logger)
-#np.save('learning_IS_app', np.array(results_IS_app))
+for i in range(len(source_tasks)):
+    print("Task:", power_sources[i], file=out_stream)
+    results = learner.learn(target_task, target_sizes, n_runs, [source_tasks[i]], [source_policies[i]], [n_source_samples[i]], out_stream)
+    np.save('learning_app_IS_' + str(i+1), np.array(results))
 
-'''print("No IS app", file=out_logger)
-learner = Learner(gamma, pf, lstd_q, lstd_v, grad_est, seed)
-results_noIS_app = learner.learn(target_task, target_sizes, n_runs, None, None, None, out_logger)
-np.save('learning_noIS_app', np.array(results_noIS_app))'''
+print("All tasks", file=out_stream)
+results = learner.learn(target_task, target_sizes, n_runs, source_tasks, source_policies, n_source_samples, out_stream)
+np.save('learning_app_IS_all', np.array(results))
 
-'''print("IS", file=out_logger)
-learner = Learner(gamma, pf, None, None, grad_est, seed)
-results_IS = learner.learn(target_task, target_sizes, n_runs, source_tasks, source_policies, n_source_samples, out_logger)
-np.save('learning_IS', np.array(results_IS))
+print("No tasks", file=out_stream)
+results = learner.learn(target_task, target_sizes, n_runs, None, None, None, out_stream)
+np.save('learning', np.array(results))
 
-print("No IS", file=out_logger)
-learner = Learner(gamma, pf, None, None, grad_est, seed)
-results_noIS = learner.learn(target_task, target_sizes, n_runs, None, None, None, out_logger)
-np.save('learning_noIS', np.array(results_noIS))'''
+
+
+'''out_stream = open('Batch.log', 'w', buffering=1)
+learner = BatchLearner(gamma, pf, lstd_q, lstd_v, grad_est, seed)
+for i in range(len(source_tasks)):
+    print("Task:", power_sources[i], file=out_stream)
+    results = learner.learn(target_task, target_sizes, n_runs, [source_tasks[i]], [source_policies[i]], out_stream)
+    np.save('learning_app_batch_' + str(i+1), np.array(results))
+
+print("All tasks", file=out_stream)
+results = learner.learn(target_task, target_sizes, n_runs, source_tasks, source_policies, out_stream)
+np.save('learning_app_batch_all', np.array(results))'''
