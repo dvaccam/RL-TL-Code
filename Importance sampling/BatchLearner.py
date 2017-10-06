@@ -74,6 +74,8 @@ class BatchLearner:
                                                       dtype=np.float64)
                 print("Coverged to:", [alpha_1_target_opt, alpha_2_target_opt], "J:", J1_opt, file=self.out_stream)
 
+        return results
+
 
 
     def optimize_policy_parameters(self, target_size, target_task, source_samples=None, source_tasks=None,

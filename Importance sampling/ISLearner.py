@@ -86,6 +86,8 @@ class ISLearner:
                 results[run_idx, size_idx] = np.array([alpha_1_target_opt, alpha_1_target_opt, J1_opt], dtype=np.float64)
                 print("Coverged to:", [alpha_1_target_opt, alpha_2_target_opt], "J:", J1_opt, file=self.out_stream)
 
+        return results
+
 
 
     def optimize_policy_parameters(self, target_size, target_task, source_samples=None, source_tasks=None, source_policies=None,
@@ -164,8 +166,7 @@ class ISLearner:
             iter += 1
             step_size -= (0.01 - 0.001) / max_iters
         if iter > max_iters:
-            self.out_stream.write("Did not converge")
-            self.out_stream.write(grad_norm, iter)
+            print("Did not converge;",grad_norm,iter, file=self.out_stream)
         return alpha1, alpha2
 
 

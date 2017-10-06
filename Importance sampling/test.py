@@ -3,36 +3,18 @@ import matplotlib.pyplot as plt
 from matplotlib import cm
 from matplotlib.ticker import LinearLocator, FormatStrFormatter
 import numpy as np
+from scipy.special import erf
 epsp = (20*0.3)**2
 epsv = (1.4*.3)**2
-xs = np.linspace(-11, 11, 100)
-ys = np.linspace(-0.8, 0.8, 100)
-as_ = np.linspace(-0.9, 0.9, 10)
+xs = np.linspace(0., 1., 100)
+ys = np.linspace(0., 1., 100)
 xs, ys = np.meshgrid(xs, ys)
-xs = xs.flatten()
-ys = ys.flatten()
-
-
-p1 = np.array([-10])
-p3 = np.array([10])
-p2 = np.array([0])
-v1 = np.array([-0.7])
-v3 = np.array([0.7])
-v2 = np.array([0])
-dp1 = np.abs(xs - p1)
-dp2 = np.abs(xs - p2)
-dp3 = np.abs(xs - p3)
-dv1 = np.abs(ys - v1)
-dv2 = np.abs(ys - v2)
-dv3 = np.abs(ys - v3)
-d = np.stack((np.exp(-dp1**2/epsp - dv1**2/epsv), np.exp(-dp1**2/epsp - dv2**2/epsv), np.exp(-dp1**2/epsp - dv3**2/epsv),
-              np.exp(-dp2 ** 2 / epsp - dv1 ** 2 / epsv), np.exp(-dp2**2/epsp - dv2**2/epsv), np.exp(-dp2**2/epsp - dv3**2/epsv),
-              np.exp(-dp3 ** 2 / epsp - dv1 ** 2 / epsv), np.exp(-dp3 ** 2 / epsp - dv2 ** 2 / epsv),np.exp(-dp3 ** 2 / epsp - dv3 ** 2 / epsv),
-              np.ones(dp1.shape[0], dtype=np.float64))).T
-zs = (d*np.array([60., 65., 70., 50., 0., 80., 40., 65., 90., 0.])).sum(axis=1)
 fig = plt.figure()
+zs = np.abs((erf((0.6 - xs*0.7) / (0.2 * np.sqrt(2.))) - erf((0.4 - xs*0.7) / (0.2 * np.sqrt(2.))))/2. - (erf((0.6 - ys*0.7) / (0.2 * np.sqrt(2.))) - erf((0.4 - ys*0.7) / (0.2 * np.sqrt(2.))))/2.)
 ax = fig.add_subplot(111, projection='3d')
-sur = ax.plot_surface(xs.reshape((100,100)), ys.reshape((100,100)), zs.reshape((100,100)))
+sur = ax.plot_surface(xs, ys, zs)
+zs1 = 2*0.7*np.abs(xs-ys)/(np.sqrt(2*np.pi)*0.2)
+sur = ax.plot_surface(xs, ys, zs1)
 plt.show()
 plt.close()
 

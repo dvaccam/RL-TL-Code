@@ -84,10 +84,10 @@ class PolicyMC:
         a2_mask = np.logical_not(a1_mask)
         vel_norm = self.factory.state_reps[:, 1] / self.factory.max_speed
         mu = (a1_mask * self.alpha1 + a2_mask * self.alpha2) * vel_norm
-        all_grads[:,0] = (-np.exp(-((mu - self.factory.action_bins[1])/self.factory.action_noise)**2)*vel_norm) / (self.factory.action_noise*np.sqrt(2*np.pi)*self.choice_matrix[:,0])
-        all_grads[:,-1] = (np.exp(-((mu - self.factory.action_bins[-2])/self.factory.action_noise) ** 2) * vel_norm) / (self.factory.action_noise * np.sqrt(2 * np.pi) * self.choice_matrix[:,-1])
+        all_grads[:,0] = -(np.exp(-((self.factory.action_bins[1] - mu)/(self.factory.action_noise*np.sqrt(2.)))**2)*vel_norm) / (self.factory.action_noise*np.sqrt(2*np.pi)*self.choice_matrix[:,0])
+        all_grads[:,-1] = (np.exp(-((self.factory.action_bins[-2] - mu)/(self.factory.action_noise*np.sqrt(2.)))**2)*vel_norm) / (self.factory.action_noise*np.sqrt(2*np.pi)*self.choice_matrix[:,-1])
         mu_rep = np.hstack([mu.reshape((-1,1))] * (self.factory.action_reps.shape[0] - 2))
-        all_grads[:,1:-1] = ((-np.exp(-((mu_rep - self.factory.action_bins[2:-1])/self.factory.action_noise)**2) + np.exp(-((mu_rep - self.factory.action_bins[1:-2])/self.factory.action_noise)**2)).T*vel_norm).T/(self.factory.action_noise*np.sqrt(2*np.pi)*self.choice_matrix[:,1:-1])
+        all_grads[:,1:-1] = ((-np.exp(-((self.factory.action_bins[2:-1]- mu_rep)/(self.factory.action_noise*np.sqrt(2.)))**2) + np.exp(-((mu_rep - self.factory.action_bins[1:-2])/(self.factory.action_noise*np.sqrt(2.)))**2)).T*vel_norm).T/(self.factory.action_noise*np.sqrt(2*np.pi)*self.choice_matrix[:,1:-1])
         self.log_gradient_matrix[a1_mask,:,0] = all_grads[a1_mask]
         self.log_gradient_matrix[a2_mask,:,1] = all_grads[a2_mask]
 

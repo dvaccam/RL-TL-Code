@@ -205,7 +205,6 @@ class Continuous_MountainCarEnv(gym.Env):
                 if (position > self.max_position): position = self.max_position
                 if (position < self.min_position): position = self.min_position
                 if (position <= self.position_bins[1] and velocity < 0): velocity = 0
-                position, velocity = self.discretize_state(np.array([position, velocity]))
             return np.array([position, velocity])
         elif initial_state.ndim == 2 and action.ndim == 2:
             positions = initial_state[:,0].copy()
@@ -223,7 +222,6 @@ class Continuous_MountainCarEnv(gym.Env):
                 positions += velocities
                 positions = np.clip(positions, self.min_position, self.max_position)
                 velocities[np.logical_and(positions <= self.position_bins[1], velocities < 0)] = 0
-                positions, velocities = self.discretize_state(np.vstack((positions, velocities)).T).T
         return np.vstack((positions, velocities)).T
 
 

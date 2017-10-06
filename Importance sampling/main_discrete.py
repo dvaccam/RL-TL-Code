@@ -284,10 +284,10 @@ Vs = lstd_v.fit(a, predict=True, weights_d=w3, weights_p=w4, weights_r=w6)
 grad = grad_est.estimate_gradient(a, target_policy, weights=w, Q=Qs, V=Vs)
 print(grad, g)'''
 
-target_sizes = list(range(200, 1000, 200)) + list(range(1000, 10000, 1000)) + list(range(10000, 50000 + 1, 10000))
+target_sizes = list(range(1000, 10000, 1000)) + list(range(10000, 50000 + 1, 10000))
 n_runs = 10
 
-out_stream = open('IS.log', 'w', buffering=1)
+'''out_stream = open('IS.log', 'w', buffering=1)
 learner = ISLearner(gamma, pf, lstd_q, lstd_v, grad_est, seed)
 for i in range(len(source_tasks)):
     print("Task:", power_sources[i], file=out_stream)
@@ -296,12 +296,14 @@ for i in range(len(source_tasks)):
 
 print("All tasks", file=out_stream)
 results = learner.learn(target_task, target_sizes, n_runs, source_tasks, source_policies, n_source_samples, out_stream)
-np.save('learning_app_IS_all', np.array(results))
+np.save('learning_app_IS_all', np.array(results))'''
 
+
+out_stream = open('Learning.log', 'w', buffering=1)
+learner = ISLearner(gamma, pf, lstd_q, lstd_v, grad_est, seed)
 print("No tasks", file=out_stream)
 results = learner.learn(target_task, target_sizes, n_runs, None, None, None, out_stream)
 np.save('learning', np.array(results))
-
 
 
 '''out_stream = open('Batch.log', 'w', buffering=1)
