@@ -1,4 +1,5 @@
 import numpy as np
+import scipy as sp
 import time
 
 class LSTD_Q_Estimator:
@@ -136,7 +137,7 @@ class LSTD_Q_Estimator:
                     # w_z *= ratio of probs of going from phi[t-1] to phi[t] if lambda != 0. else 1.
                 A += w_z * z.reshape((-1, 1)).dot(weights_d[t]*(phi[t] - self.gamma * weights_p[t] * phi_ns[t]).reshape((1, -1)))
                 b += w_z * z * weights_r[t] * rewards[t]'''
-        self.theta = np.linalg.pinv(A).dot(b)
+        self.theta = sp.linalg.pinv2(A).dot(b)
         if predict:
             return phi.dot(self.theta)
 

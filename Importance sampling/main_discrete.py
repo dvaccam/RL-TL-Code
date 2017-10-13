@@ -9,6 +9,7 @@ from PolicyFactoryMC import PolicyFactoryMC, PolicyMC
 from LSTD_Q_Estimator import LSTD_Q_Estimator
 from LSTD_V_Estimator import LSTD_V_Estimator
 from GradientEstimator import GradientEstimator
+from MinMaxEstimator import MinMaxWeightsEstimator
 from ISLearner import ISLearner
 from BatchLearner import BatchLearner
 import multiprocessing as mp
@@ -218,6 +219,7 @@ lstd_q = LSTD_Q_Estimator(7, 7, 2, 0.45, True, gamma, 0., min_pos, max_pos, targ
                           min_act, max_act)
 lstd_v = LSTD_V_Estimator(6, 6, 0.2, True, gamma, 0., min_pos, max_pos, target_task.env.min_speed, target_task.env.max_speed)
 grad_est = GradientEstimator(baseline_type=1)
+weights_est = MinMaxWeightsEstimator(gamma)
 
 '''xs = source_tasks[0].env.state_reps[:,0]
 ys = source_tasks[0].env.state_reps[:,1]
@@ -268,42 +270,58 @@ target_task.env.set_policy(pf.create_policy(.5, .5), gamma)
 b5 = target_task.env.J
 print(b1, b2, b3, b4, b5)'''
 
-'''learner = Learner(gamma, pf, lstd_q, lstd_v, grad_est, seed)
-a = learner.collect_samples(source_tasks[0], n_source_samples[0], source_policies[0])
-w = learner.calculate_density_ratios_dseta(a, source_tasks[0], target_task, source_policies[0], target_policy)
-w2 = learner.calculate_density_ratios_transition_sa(a, source_tasks[0], target_task, source_policies[0], target_policy)
-w3 = learner.calculate_density_ratios_delta(a, source_tasks[0], target_task, source_policies[0], target_policy)
-w4 = learner.calculate_density_ratios_transition_s(a, source_tasks[0], target_task, source_policies[0], target_policy)
-w5 = learner.calculate_density_ratios_r_sa(a, source_tasks[0], target_task, source_policies[0], target_policy)
-w6 = learner.calculate_density_ratios_r_s(a, source_tasks[0], target_task, source_policies[0], target_policy)
+'''learner = ISLearner(gamma, pf, lstd_q, lstd_v, grad_est, seed)
+a = learner.collect_samples(source_tasks[2], n_source_samples[2], source_policies[2])
+w = learner.calculate_density_ratios_dseta(a, source_tasks[2], target_task, source_policies[2], target_policy)
+w4 = learner.calculate_density_ratios_transition(a, source_tasks[2], target_task, source_policies[2], target_policy)
+w5 = learner.calculate_density_ratios_policy(a, source_tasks[2], target_task, source_policies[2], target_policy)
 g = target_policy.log_gradient_matrix.copy()
 g = np.transpose(g, axes=(2, 0, 1)) * (target_task.env.Q * target_task.env.dseta_distr)
 g = np.transpose(g, axes=(1, 2, 0)).sum(axis=(0, 1))
-Qs = lstd_q.fit(a, predict=True, weights_d=w, weights_p=w2, weights_r=w5)
-Vs = lstd_v.fit(a, predict=True, weights_d=w3, weights_p=w4, weights_r=w6)
+Qs = lstd_q.fit(a, predict=True, weights=w*w4*w5)
+Vs = lstd_v.fit(a, predict=True, weights=w*w4)
 grad = grad_est.estimate_gradient(a, target_policy, weights=w, Q=Qs, V=Vs)
 print(grad, g)'''
+
+'''import contextlib
+import ctypes
+from ctypes.util import find_library
+
+# Prioritize hand-compiled OpenBLAS library over version in /usr/lib/
+# from Ubuntu repos
+try_paths = [find_library('openblas')]
+openblas_lib = None
+for libpath in try_paths:
+    try:
+        openblas_lib = ctypes.cdll.LoadLibrary(libpath)
+        break
+    except OSError:
+        continue
+if openblas_lib is None:
+    raise EnvironmentError('Could not locate an OpenBLAS shared library', 2)
+
+openblas_lib.openblas_set_num_threads(int(2))'''
 
 target_sizes = list(range(1000, 10000, 1000)) + list(range(10000, 50000 + 1, 10000))
 n_runs = 10
 
-'''out_stream = open('IS.log', 'w', buffering=1)
-learner = ISLearner(gamma, pf, lstd_q, lstd_v, grad_est, seed)
-for i in range(len(source_tasks)):
+out_stream = open('IS_mm.log', 'w', buffering=1)
+learner = ISLearner(gamma, pf, lstd_q, lstd_v, grad_est, weights_est, seed)
+for i in [2]:
     print("Task:", power_sources[i], file=out_stream)
     results = learner.learn(target_task, target_sizes, n_runs, [source_tasks[i]], [source_policies[i]], [n_source_samples[i]], out_stream)
-    np.save('learning_app_IS_' + str(i+1), np.array(results))
+    #np.save('learning_app_IS_' + str(i+1), np.array(results))
 
-print("All tasks", file=out_stream)
+'''print("All tasks", file=out_stream)
 results = learner.learn(target_task, target_sizes, n_runs, source_tasks, source_policies, n_source_samples, out_stream)
-np.save('learning_app_IS_all', np.array(results))'''
+np.save('learning_app_IS_all', np.array(results))
 
 
 out_stream = open('Learning.log', 'w', buffering=1)
-learner = ISLearner(gamma, pf, lstd_q, lstd_v, grad_est, seed)
+learner = ISLearner(gamma, pf, lstd_q, lstd_v, grad_est, None, seed)
 print("No tasks", file=out_stream)
 results = learner.learn(target_task, target_sizes, n_runs, None, None, None, out_stream)
-np.save('learning', np.array(results))
+np.save('learning', np.array(results))'''
 
 
 '''out_stream = open('Batch.log', 'w', buffering=1)

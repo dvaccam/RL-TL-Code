@@ -5,12 +5,13 @@ import time
 
 
 class ISLearner:
-    def __init__(self, gamma, policy_factory, q_estimator, v_estimator, gradient_estimator, seed):
+    def __init__(self, gamma, policy_factory, q_estimator, v_estimator, gradient_estimator, weights_estimator, seed):
         self.gamma = gamma
         self.policy_factory = policy_factory
         self.q_estimator = q_estimator
         self.v_estimator = v_estimator
         self.gradient_estimator = gradient_estimator
+        self.weights_estimator = weights_estimator
         self.initial_seed = seed
         self.seed = seed
 
@@ -41,6 +42,7 @@ class ISLearner:
             source_samples_probs_dseta = None
             source_samples_probs_p = None
             source_samples_probs_pi = None
+            Qs = None
             phi_source_q = None
             phi_ns_source_q = None
             phi_source_v = None
@@ -56,6 +58,8 @@ class ISLearner:
                     phi_ns_source_q = []
                     phi_source_v = []
                     phi_ns_source_v = []
+                if self.weights_estimator is not None:
+                    Qs = []
                 for i in range(len(source_tasks)):
                     samples = self.collect_samples(source_tasks[i], n_sources_samples[i], source_policies[i])
                     source_samples.append(samples)
@@ -67,11 +71,16 @@ class ISLearner:
                         phi_ns_source_q.append(self.q_estimator.map_to_feature_space(samples['ns'], samples['na']))
                         phi_source_v.append(self.v_estimator.map_to_feature_space(samples['fs']))
                         phi_ns_source_v.append(self.v_estimator.map_to_feature_space(samples['ns']))
+                    if self.weights_estimator is not None:
+                        Qs.append(source_tasks[i].env.Q[samples['fsi'], samples['ai']])
             if phi_source_q is not None and phi_ns_source_q is not None and phi_source_v is not None and phi_ns_source_v is not None:
                 phi_source_q = np.vstack(phi_source_q)
                 phi_ns_source_q = np.vstack(phi_ns_source_q)
                 phi_source_v = np.vstack(phi_source_v)
                 phi_ns_source_v = np.vstack(phi_ns_source_v)
+
+            if self.weights_estimator is not None:
+                self.weights_estimator.set_sources(source_samples, source_tasks, source_policies, Qs)
 
             for size_idx, target_size in enumerate(n_target_samples):
                 print("No. samples:", target_size, file=self.out_stream)
@@ -151,9 +160,18 @@ class ISLearner:
                 else:
                     Qs = target_task.env.Q[transfer_samples['fsi'], transfer_samples['ai']]
                     Vs = target_task.env.V[transfer_samples['fsi']]
+                samples_idx = np.array([0] + [ss['fs'].shape[0] for ss in source_samples]).cumsum().astype(np.int64) + target_size
+                if self.weights_estimator is not None:
+                    weights_dseta = self.weights_estimator.estimate_weights(pol, target_task.env.power, target_size,
+                                                                            [Qs[samples_idx[j]:samples_idx[j+1]] for j in range(len(source_samples))])
+                    weights_dseta = np.append(np.ones(target_size, dtype=np.float64), weights_dseta)
                 grad = self.gradient_estimator.estimate_gradient(transfer_samples, pol, Q=Qs, V=Vs, weights=weights_dseta)
+                '''g = pol.log_gradient_matrix.copy()
+                g = np.transpose(g, axes=(2, 0, 1)) * (target_task.env.Q * target_task.env.dseta_distr)
+                g = np.transpose(g, axes=(1, 2, 0)).sum(axis=(0, 1))
+                print(grad, g, alpha1, alpha2)'''
             else:
-                if self.v_estimator is not None and self.v_estimator is not None:
+                if self.q_estimator is not None and self.v_estimator is not None:
                     Qs = self.q_estimator.fit(target_samples, predict=True)
                     Vs = self.v_estimator.fit(target_samples, predict=True)
                 else:
@@ -163,6 +181,7 @@ class ISLearner:
             grad *= np.array([(0 < alpha1 < 1) or ((alpha1 < 1 or grad[0] < 0) and (alpha1 > 0 or grad[0] > 0)),
                               (0 < alpha2 < 1) or ((alpha2 < 1 or grad[1] < 0) and (alpha2 > 0 or grad[1] > 0))])
             grad_norm = np.linalg.norm(grad)
+            grad = np.clip(grad, -1., 1.)
             iter += 1
             step_size -= (0.01 - 0.001) / max_iters
         if iter > max_iters:
