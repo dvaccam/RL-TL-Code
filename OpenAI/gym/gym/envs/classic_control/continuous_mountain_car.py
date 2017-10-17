@@ -248,12 +248,12 @@ class Continuous_MountainCarEnv(gym.Env):
         self.policy = policy
         P_pi = np.transpose(self.transition_matrix, axes=(2, 0, 1)).copy()
         P_pi = (P_pi * policy.choice_matrix).sum(axis=2).T
-        P_pi_inv = np.linalg.inv(np.eye(self.transition_matrix.shape[0]) - gamma * P_pi)
-        self.P_inf = (1. - gamma) * P_pi_inv.T.dot(np.ones(P_pi_inv.shape[0], dtype=np.float64))
-        self.delta_distr = (1. - gamma) * P_pi_inv.T.dot(self.initial_state_distr)
+        self.P_pi_inv = np.linalg.inv(np.eye(self.transition_matrix.shape[0]) - gamma * P_pi)
+        self.P_inf = (1. - gamma) * self.P_pi_inv.T.dot(np.ones(self.P_pi_inv.shape[0], dtype=np.float64))
+        self.delta_distr = (1. - gamma) * self.P_pi_inv.T.dot(self.initial_state_distr)
         self.dseta_distr = (policy.choice_matrix.T * self.delta_distr).T
         R_pi = (self.R* policy.choice_matrix).sum(axis=1)
-        self.V = P_pi_inv.dot(R_pi)
+        self.V = self.P_pi_inv.dot(R_pi)
         self.J = self.V.dot(self.initial_state_distr)
         self.Q = self.R + gamma*(self.transition_matrix*self.V).sum(axis=2)
 
@@ -318,7 +318,7 @@ class Continuous_MountainCarEnv(gym.Env):
             next_state = next_state.ravel()
             reward = -math.pow(2, np.abs(min(max(action[0], self.min_action), self.max_action))) * 0.1
             if next_state[0] >= self.goal_position:
-                reward += -100.
+                reward += 100.
             if first_state[0] >= self.goal_position:
                 reward = 0.
                 #print("Warning: asking for reward from a terminal state")
@@ -326,7 +326,7 @@ class Continuous_MountainCarEnv(gym.Env):
         elif first_state.ndim == 2 and action.ndim == 2 and next_state.ndim == 2:
             rewards = -np.power(2, np.abs(np.clip(action.flatten(), self.min_action, self.max_action)))*0.1
             mask_1 = next_state[:,0] >= self.goal_position
-            rewards[mask_1] += -100.
+            rewards[mask_1] += 100.
             mask_2 = first_state[:,0] >= self.goal_position
             rewards[mask_2] = 0.
             return rewards

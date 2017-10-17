@@ -181,7 +181,8 @@ class ISLearner:
             grad *= np.array([(0 < alpha1 < 1) or ((alpha1 < 1 or grad[0] < 0) and (alpha1 > 0 or grad[0] > 0)),
                               (0 < alpha2 < 1) or ((alpha2 < 1 or grad[1] < 0) and (alpha2 > 0 or grad[1] > 0))])
             grad_norm = np.linalg.norm(grad)
-            grad = np.clip(grad, -1., 1.)
+            #grad = np.clip(grad, -1., 1.)
+            grad /= np.linalg.norm(grad, ord=np.inf) if grad_norm != 0. else 1.
             iter += 1
             step_size -= (0.01 - 0.001) / max_iters
         if iter > max_iters:
