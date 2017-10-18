@@ -32,7 +32,7 @@ class ISLearner:
             else:
                 print("No transfer", file=self.out_stream)
 
-        results = np.zeros((n_runs, len(n_target_samples), 3), dtype=np.float64)
+        results = np.zeros((n_runs, len(n_target_samples)), dtype=np.float64)
         for run_idx in range(n_runs):
             print("Run:", run_idx+1, file=self.out_stream)
             np.random.seed(self.seed)
@@ -42,11 +42,6 @@ class ISLearner:
             source_samples_probs_dseta = None
             source_samples_probs_p = None
             source_samples_probs_pi = None
-            Qs = None
-            phi_source_q = None
-            phi_ns_source_q = None
-            phi_source_v = None
-            phi_ns_source_v = None
 
             if source_tasks is not None and source_policies is not None and n_sources_samples is not None:
                 source_samples = []
@@ -54,12 +49,6 @@ class ISLearner:
                 if self.v_estimator is not None and self.q_estimator is not None:
                     source_samples_probs_p = []
                     source_samples_probs_pi = []
-                    phi_source_q = []
-                    phi_ns_source_q = []
-                    phi_source_v = []
-                    phi_ns_source_v = []
-                if self.weights_estimator is not None:
-                    Qs = []
                 for i in range(len(source_tasks)):
                     samples = self.collect_samples(source_tasks[i], n_sources_samples[i], source_policies[i])
                     source_samples.append(samples)
@@ -67,20 +56,21 @@ class ISLearner:
                     if self.v_estimator is not None and self.q_estimator is not None:
                         source_samples_probs_p.append(source_tasks[i].env.transition_matrix[samples['fsi'], samples['ai'], samples['nsi']])
                         source_samples_probs_pi.append(source_policies[i].choice_matrix[samples['nsi'], samples['nai']])
-                        phi_source_q.append(self.q_estimator.map_to_feature_space(samples['fs'], samples['a']))
-                        phi_ns_source_q.append(self.q_estimator.map_to_feature_space(samples['ns'], samples['na']))
-                        phi_source_v.append(self.v_estimator.map_to_feature_space(samples['fs']))
-                        phi_ns_source_v.append(self.v_estimator.map_to_feature_space(samples['ns']))
-                    if self.weights_estimator is not None:
-                        Qs.append(source_tasks[i].env.Q[samples['fsi'], samples['ai']])
-            if phi_source_q is not None and phi_ns_source_q is not None and phi_source_v is not None and phi_ns_source_v is not None:
-                phi_source_q = np.vstack(phi_source_q)
-                phi_ns_source_q = np.vstack(phi_ns_source_q)
-                phi_source_v = np.vstack(phi_source_v)
-                phi_ns_source_v = np.vstack(phi_ns_source_v)
+                self.gradient_estimator.add_sources()
+                if self.v_estimator is not None and self.q_estimator is not None:
+                    self.q_estimator.add_sources(source_samples)
+                    self.v_estimator.add_sources(source_samples)
+                if self.weights_estimator is not None:
+                    self.weights_estimator.add_sources(source_samples)
 
             if self.weights_estimator is not None:
-                self.weights_estimator.set_sources(source_samples, source_tasks, source_policies, Qs)
+                idx_grid = np.dstack(np.meshgrid(np.arange(source_tasks[0].env.state_reps.shape[0]),
+                                                 np.arange(source_tasks[0].env.action_reps.shape[0]),
+                                                 indexing='ij')).reshape(-1, 2)
+                phi_all_q = self.q_estimator.map_to_feature_space(source_tasks[0].env.state_reps[idx_grid[:,0]],
+                                                                  source_tasks[0].env.action_reps[idx_grid[:,1]])
+                self.weights_estimator.set_sources(source_samples, source_tasks, source_policies, source_samples_Qs,
+                                                   phi_all_q)
 
             for size_idx, target_size in enumerate(n_target_samples):
                 print("No. samples:", target_size, file=self.out_stream)
@@ -92,8 +82,11 @@ class ISLearner:
                 optimal_pi = self.policy_factory.create_policy(alpha_1_target_opt, alpha_2_target_opt)
                 target_task.env.set_policy(optimal_pi, self.gamma)
                 J1_opt = target_task.env.J
-                results[run_idx, size_idx] = np.array([alpha_1_target_opt, alpha_1_target_opt, J1_opt], dtype=np.float64)
-                print("Coverged to:", [alpha_1_target_opt, alpha_2_target_opt], "J:", J1_opt, file=self.out_stream)
+                results[run_idx, size_idx] = J1_opt
+                print("Ended at:", [alpha_1_target_opt, alpha_2_target_opt], "J:", J1_opt, file=self.out_stream)
+                self.gradient_estimator.clean_sources()
+                self.q_estimator.clean_sources()
+                self.v_estimator.clean_sources()
 
         return results
 
@@ -152,24 +145,25 @@ class ISLearner:
                                   'nai': np.concatenate([target_samples['nai']] + [ss['nai'] for ss in source_samples])}
                 if self.v_estimator is not None and self.q_estimator is not None:
                     Qs = self.q_estimator.fit(transfer_samples, predict=True,
-                                              weights=weights_dseta*weights_p*weights_pi,
+                                              source_weights=weights_dseta * weights_p * weights_pi,
                                               phi_source=phi_source_q, phi_ns_source=phi_ns_source_q)
                     Vs = self.v_estimator.fit(transfer_samples, predict=True,
-                                              weights=weights_dseta*weights_p,
+                                              source_weights=weights_dseta * weights_p,
                                               phi_source=phi_source_v, phi_ns_source=phi_ns_source_v)
                 else:
                     Qs = target_task.env.Q[transfer_samples['fsi'], transfer_samples['ai']]
                     Vs = target_task.env.V[transfer_samples['fsi']]
-                samples_idx = np.array([0] + [ss['fs'].shape[0] for ss in source_samples]).cumsum().astype(np.int64) + target_size
                 if self.weights_estimator is not None:
+                    grad_J1 = self.gradient_estimator.estimate_gradient(target_samples, pol,
+                                                                        Q=Qs[:target_size], V=Vs[:target_size])
                     weights_dseta = self.weights_estimator.estimate_weights(pol, target_task.env.power, target_size,
-                                                                            [Qs[samples_idx[j]:samples_idx[j+1]] for j in range(len(source_samples))])
+                                                                            self.q_estimator, grad_J1, target_task)
                     weights_dseta = np.append(np.ones(target_size, dtype=np.float64), weights_dseta)
-                grad = self.gradient_estimator.estimate_gradient(transfer_samples, pol, Q=Qs, V=Vs, weights=weights_dseta)
+                grad = self.gradient_estimator.estimate_gradient(transfer_samples, pol, Q=Qs, V=Vs, source_weights=weights_dseta)
                 '''g = pol.log_gradient_matrix.copy()
                 g = np.transpose(g, axes=(2, 0, 1)) * (target_task.env.Q * target_task.env.dseta_distr)
                 g = np.transpose(g, axes=(1, 2, 0)).sum(axis=(0, 1))
-                print(grad, g, alpha1, alpha2)'''
+                print(grad, grad_J1, g, alpha1, alpha2)'''
             else:
                 if self.q_estimator is not None and self.v_estimator is not None:
                     Qs = self.q_estimator.fit(target_samples, predict=True)

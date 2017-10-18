@@ -3,22 +3,34 @@ import numpy as np
 class GradientEstimator:
     def __init__(self, baseline_type):
         self.baseline_type = baseline_type
+        self.use_source = False
 
 
-    def estimate_gradient(self, dataset, policy, weights=None, Q=None, V=None):
-        state_idx = dataset['fsi']
-        action_idx = dataset['ai']
-        grads = policy.log_gradient_matrix[state_idx, action_idx]
+    # Source info set only through here, no more at estimation time
+    def add_sources(self):
+        self.use_source = True
+
+
+
+    def clean_sources(self):
+        self.use_source = False
+
+
+
+    # Weights are for the sources; log_gradient, Q and V are for [target, source]
+    def estimate_gradient(self, dataset, log_gradient, Q, V=None, source_weights=None):
+        if source_weights is not None:
+            target_size = dataset['fsi'].shape[0]
+            weights = np.hstack((np.ones(target_size, dtype=np.float64), source_weights))
+
         if self.baseline_type == 0:
-            grad = (grads.T * Q).T
-            if weights is not None:
-                grad = (grad.T * weights).T
-            grad = grad.mean(axis=0)
+            gradient = log_gradient*Q.reshape((-1,1)).copy()
+            if source_weights is not None:
+                gradient = gradient*weights.reshape((-1,1))
+            gradient = gradient.mean(axis=0)
         if self.baseline_type == 1:
-            grad = (grads.T * Q).T
-            baseline = V
-            grad = grad - (grads.T * baseline).T
-            if weights is not None:
-                grad = (grad.T * weights).T
-            grad = grad.mean(axis=0)
-        return grad
+            gradient = log_gradient*(Q-V).reshape((-1,1))
+            if source_weights is not None:
+                gradient = gradient*weights.reshape((-1,1))
+            gradient = gradient.mean(axis=0)
+        return gradient

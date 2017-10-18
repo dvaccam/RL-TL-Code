@@ -19,6 +19,11 @@ class LSTD_V_Estimator:
         self.idx_grid = np.stack(np.meshgrid(np.arange(self.pos_kernels.shape[0]),
                                              np.arange(self.vel_kernels.shape[0]),
                                              indexing='ij')).reshape((-1, 2))
+        self.source_phi_s = None
+        self.source_phi_ns = None
+        self.source_rewards = None
+
+
 
     def map_to_feature_space(self, s):
         if s.ndim == 2:
@@ -39,78 +44,55 @@ class LSTD_V_Estimator:
 
 
 
-    def fit(self, dataset, weights=None, phi_source=None, phi_ns_source=None, predict=False):
-        n_feats = int((self.n_kernels_pos * self.n_kernels_vel) + self.fit_bias)
-        A = np.zeros((n_feats, n_feats), dtype=np.float64)
-        b = np.zeros(n_feats, dtype=np.float64)
-
-        if phi_source is not None and phi_ns_source is not None:
-            source_size = phi_source.shape[0]
-            first_states = dataset['fs'][:-source_size]
-            next_states = dataset['ns'][:-source_size]
-            phi = np.vstack((self.map_to_feature_space(first_states), phi_source))
-            phi_ns = np.vstack((self.map_to_feature_space(next_states), phi_ns_source))
+    def add_sources(self, source_datasets):
+        if self.source_phi_s is None and self.source_phi_ns is None and self.source_rewards is not None:
+            self.source_phi_s = self.map_to_feature_space(np.vstack([sd['fs'] for sd in source_datasets]))
+            self.source_phi_ns = self.map_to_feature_space(np.vstack([sd['ns'] for sd in source_datasets]))
+            self.source_rewards = np.hstack([sd['r'] for sd in source_datasets])
         else:
-            first_states = dataset['fs']
-            next_states = dataset['ns']
-            phi = self.map_to_feature_space(first_states)
-            phi_ns = self.map_to_feature_space(next_states)
+            self.source_phi_s = np.vstack([self.source_phi_s] +
+                                          self.map_to_feature_space(np.vstack([sd['fs'] for sd in source_datasets])))
+            self.source_phi_ns = np.vstack([self.source_phi_ns] +
+                                           self.map_to_feature_space(np.vstack([sd['ns'] for sd in source_datasets])))
+            self.source_rewards = np.hstack([self.source_rewards] +
+                                            np.hstack([sd['r'] for sd in source_datasets]))
 
+
+
+    def clean_sources(self):
+        self.source_phi_s = self.source_phi_ns = self.source_rewards = None
+
+
+
+    def fit(self, dataset, source_weights=None, predict=False):
+        first_states = dataset['fs']
+        next_states = dataset['ns']
+        phi_s = self.map_to_feature_space(first_states)
+        phi_ns = self.map_to_feature_space(next_states)
         rewards = dataset['r']
 
-        if self.lam == 0:
-            delta_phi = phi - self.gamma * phi_ns
-            if weights is not None:
-                delta_phi *= weights.reshape((-1, 1))
-            A = phi.T.dot(delta_phi)
-            b = phi * rewards.reshape((-1,1))
-            if weights is not None:
-                b *= weights.reshape((-1, 1))
-            b = b.sum(axis=0)
-        '''else: #TODO: Optimize
-            if weights_d is None:
-                weights_d = np.ones(dataset['fs'].shape[0], dtype=np.float64)
-            if weights_p is None:
-                weights_p = np.ones(dataset['fs'].shape[0], dtype=np.float64)
-            if weights_r is None:
-                weights_r = np.ones(dataset['fs'].shape[0], dtype=np.float64)
-            for t in range(first_states.shape[0]):
-                if t == 0:
-                    z = phi[t].copy()
-                    w_z = 1.
-                else:
-                    z = self.lam * self.gamma * z + phi[t] #
-                    # w_z *= ratio of probs of going from phi[t-1] to phi[t] if lambda != 0. else 1.
-                A += w_z * z.reshape((-1, 1)).dot(weights_d[t]*(phi[t] - self.gamma * weights_p[t] * phi_ns[t]).reshape((1, -1)))
-                b += w_z * z * weights_r[t] * rewards[t]'''
+        if source_weights is not None:
+            phi_s = np.vstack((phi_s, self.source_phi_s))
+            phi_ns = np.vstack((phi_ns, self.source_phi_ns))
+            rewards = np.hstack((rewards, self.source_rewards))
+            weights = np.hstack((np.ones(first_states.shape[0], dtype=np.float64), source_weights))
+
+        delta_phi = phi_s - self.gamma * phi_ns
+        if source_weights is not None:
+            delta_phi *= weights.reshape((-1, 1))
+        A = phi_s.T.dot(delta_phi)
+        b = phi_s * rewards.reshape((-1,1))
+        if source_weights is not None:
+            b *= weights.reshape((-1, 1))
+        b = b.sum(axis=0)
         self.theta = sp.linalg.pinv2(A).dot(b)
         if predict:
-            return phi.dot(self.theta)
+            return phi_s.dot(self.theta)
 
 
 
-    def fit2(self, dataset):
-        phi = self.map_to_feature_space(dataset['fs'])
-        phi_next = self.map_to_feature_space(dataset['ns'])
-        if self.lam != 0:
-            exps = np.tri(dataset['fs'].shape[0], k=-1, dtype=np.float64).cumsum(axis=0)
-            gl = (np.power(self.gamma * self.lam, exps) * np.tri(dataset['fs'].shape[0], dtype=np.float64))
-        else:
-            gl = np.eye(dataset['fs'].shape[0], dtype=np.float64)
-        z = ((phi.T.reshape(phi.shape[1], 1, -1)) * gl).sum(axis=2).T
-        r = dataset['r']
-        b = (z.T * r).T.sum(axis=0)
-        A = (phi - self.gamma * phi_next)
-        A = np.array([z[i].reshape((-1, 1)).dot(A[i].reshape((1, -1))) for i in range(A.shape[0])]).sum(axis=0)
-        self.theta = np.linalg.pinv(A).dot(b)
-
-
-
-    def predict(self, s, phi_source=None):
-        if phi_source is not None:
-            source_size = phi_source.shape[0]
-            phi_s = np.vstack((self.map_to_feature_space(s[:-source_size]), phi_source))
-        else:
+    def predict(self, s, phi_s):
+        if phi_s is None:
             phi_s = self.map_to_feature_space(s)
         return phi_s.dot(self.theta)
 

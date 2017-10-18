@@ -283,24 +283,6 @@ Vs = lstd_v.fit(a, predict=True, weights=w*w4)
 grad = grad_est.estimate_gradient(a, target_policy, weights=w, Q=Qs, V=Vs)
 print(grad, g)'''
 
-'''import contextlib
-import ctypes
-from ctypes.util import find_library
-
-# Prioritize hand-compiled OpenBLAS library over version in /usr/lib/
-# from Ubuntu repos
-try_paths = [find_library('openblas')]
-openblas_lib = None
-for libpath in try_paths:
-    try:
-        openblas_lib = ctypes.cdll.LoadLibrary(libpath)
-        break
-    except OSError:
-        continue
-if openblas_lib is None:
-    raise EnvironmentError('Could not locate an OpenBLAS shared library', 2)
-
-openblas_lib.openblas_set_num_threads(int(2))'''
 
 target_sizes = list(range(1000, 10000, 1000)) + list(range(10000, 50000 + 1, 10000))
 n_runs = 10
@@ -310,14 +292,14 @@ learner = ISLearner(gamma, pf, lstd_q, lstd_v, grad_est, weights_est, seed)
 for i in [2]:
     print("Task:", power_sources[i], file=out_stream)
     results = learner.learn(target_task, target_sizes, n_runs, [source_tasks[i]], [source_policies[i]], [n_source_samples[i]], out_stream)
-    #np.save('learning_app_IS_' + str(i+1), np.array(results))
+    np.save('learning_app_IS_mm' + str(i+1), np.array(results))
 
 '''print("All tasks", file=out_stream)
 results = learner.learn(target_task, target_sizes, n_runs, source_tasks, source_policies, n_source_samples, out_stream)
-np.save('learning_app_IS_all', np.array(results))
+np.save('learning_app_IS_all', np.array(results))'''
 
 
-out_stream = open('Learning.log', 'w', buffering=1)
+'''out_stream = open('Learning.log', 'w', buffering=1)
 learner = ISLearner(gamma, pf, lstd_q, lstd_v, grad_est, None, seed)
 print("No tasks", file=out_stream)
 results = learner.learn(target_task, target_sizes, n_runs, None, None, None, out_stream)

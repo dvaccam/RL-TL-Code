@@ -70,9 +70,8 @@ class BatchLearner:
                 optimal_pi = self.policy_factory.create_policy(alpha_1_target_opt, alpha_2_target_opt)
                 target_task.env.set_policy(optimal_pi, self.gamma)
                 J1_opt = target_task.env.J
-                results[run_idx, size_idx] = np.array([alpha_1_target_opt, alpha_1_target_opt, J1_opt],
-                                                      dtype=np.float64)
-                print("Coverged to:", [alpha_1_target_opt, alpha_2_target_opt], "J:", J1_opt, file=self.out_stream)
+                results[run_idx, size_idx] = J1_opt
+                print("Ended at:", [alpha_1_target_opt, alpha_2_target_opt], "J:", J1_opt, file=self.out_stream)
 
         return results
 
