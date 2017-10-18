@@ -251,7 +251,7 @@ class Continuous_MountainCarEnv(gym.Env):
         self.P_pi_inv = np.linalg.inv(np.eye(self.transition_matrix.shape[0]) - gamma * P_pi)
         self.P_inf = (1. - gamma) * self.P_pi_inv.T.dot(np.ones(self.P_pi_inv.shape[0], dtype=np.float64))
         self.delta_distr = (1. - gamma) * self.P_pi_inv.T.dot(self.initial_state_distr)
-        self.dseta_distr = (policy.choice_matrix.T * self.delta_distr).T
+        self.zeta_distr = (policy.choice_matrix.T * self.delta_distr).T
         R_pi = (self.R* policy.choice_matrix).sum(axis=1)
         self.V = self.P_pi_inv.dot(R_pi)
         self.J = self.V.dot(self.initial_state_distr)
@@ -260,7 +260,7 @@ class Continuous_MountainCarEnv(gym.Env):
 
 
     def sample_step(self, n_samples=1):
-        idx = np.random.choice(self.dseta_distr.size, p=self.dseta_distr.flatten(), size=n_samples)
+        idx = np.random.choice(self.zeta_distr.size, p=self.zeta_distr.flatten(), size=n_samples)
         state_idx = (idx / self.action_reps.shape[0]).astype(np.int64)
         action_idx = (idx % self.action_reps.shape[0]).astype(np.int64)
         first_states = self.state_reps[state_idx]

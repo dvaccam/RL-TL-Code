@@ -100,81 +100,6 @@ def collect_episodes(task, n_episodes, max_episode_length, seed, policy, render)
 
 
 
-# No need to calculate reward of source samples on source model, we need reward of source samples in target model only
-def estimate_J(dataset, gamma, task=None, weights=None):
-    if task is None:
-        if isinstance(dataset, dict):
-            rewards = dataset['r'].copy()
-            if weights is not None:
-                rewards *= weights
-            J = rewards.mean()/(1-gamma)
-            return J
-        if isinstance(dataset, tuple):
-            rewards = dataset[-1].copy()
-            mask = rewards == 1.
-            rewards[mask] = 0.
-            discounts = np.power(gamma, np.arange(rewards.shape[1]))
-            discounted_rewards = rewards * discounts
-            discounted_rewards = discounted_rewards[np.logical_not(mask)]
-            J = discounted_rewards.mean()/(1-gamma)
-            return J
-    else:
-        state_idx = dataset['fsi']
-        action_idx = dataset['ai']
-        rewards = task.env.R[state_idx, action_idx]
-        J = rewards.mean()/(1-gamma)
-        return J
-
-
-
-def estimate_Q_TD(dataset, gamma, policy, episodic, lam):
-    e = np.zeros(policy.choice_matrix.shape, dtype=np.float64)
-    Q = e.copy()
-    alpha = 0.1
-    if episodic:
-        con = 1
-        for ep in range(dataset[0].shape[0]):
-            e = np.zeros(policy.choice_matrix.shape, dtype=np.float64)
-            alpha = 0.1
-            first_states = dataset[0][ep]
-            actions = dataset[1][ep]
-            next_states = dataset[2][ep]
-            rewards = dataset[3][ep]
-            for t in range(first_states.shape[0]):
-                if rewards[t] == 1.:
-                    break
-                con += 1
-                fs_idx = source_task.env.state_to_idx[first_states[t][0]][first_states[t][1]]
-                a_idx = source_task.env.action_to_idx[actions[t]]
-                ns_idx = source_task.env.state_to_idx[next_states[t][0]][next_states[t][1]]
-                if t == first_states.shape[0] - 1 or rewards[t+1] == 1.:
-                    na_idx = source_task.env.action_to_idx[policy.produce_action(next_states[t])]
-                else:
-                    na_idx = source_task.env.action_to_idx[actions[t+1]]
-                delta = rewards[t] + gamma*Q[ns_idx, na_idx] - Q[fs_idx, a_idx]
-                e[fs_idx, a_idx] += 1
-                Q += alpha*delta*e
-                e *= gamma*lam
-    else:
-        first_states = dataset[0]
-        actions = dataset[1]
-        next_states = dataset[2]
-        rewards = dataset[3]
-        fs_idx = dataset[4]
-        a_idx = dataset[5]
-        ns_idx = np.array([source_task.env.state_to_idx[s[0]][s[1]] for s in next_states])
-        na_idx = np.array([np.random.choice(policy.factory.action_reps.shape[0], p=policy.choice_matrix[ns])
-                                     for ns in ns_idx])
-        for t in range(first_states.shape[0]):
-            delta = rewards[t] + gamma * Q[ns_idx[t], na_idx[t]] - Q[fs_idx[t], a_idx[t]]
-            e[fs_idx[t], a_idx[t]] += 1
-            Q += alpha * delta * e
-            e *= gamma * lam
-    return Q
-
-
-
-
 
 
 gamma = 0.99
@@ -226,12 +151,12 @@ ys = source_tasks[0].env.state_reps[:,1]
 target_task.env.set_policy(target_policy, gamma)
 source_tasks[0].env.set_policy(source_policies[0], gamma)
 for act in range(n_action_bins - 1):
-    zs = source_tasks[0].env.dseta_distr[:, act].flatten()
+    zs = source_tasks[0].env.zeta_distr[:, act].flatten()
     fig = plt.figure()
     ax = fig.add_subplot(111, projection='3d')
     aux = int(source_tasks[0].env.state_reps.shape[0] / source_tasks[0].env.velocity_reps.shape[0])
     sur = ax.plot_surface(xs.reshape((-1, aux)), ys.reshape((-1, aux)), zs.reshape((-1, aux)))
-    zs = target_task.env.dseta_distr[:, act].flatten()
+    zs = target_task.env.zeta_distr[:, act].flatten()
     fig = plt.figure()
     ax = fig.add_subplot(111, projection='3d')
     aux = int(source_tasks[0].env.state_reps.shape[0] / source_tasks[0].env.velocity_reps.shape[0])
@@ -272,11 +197,11 @@ print(b1, b2, b3, b4, b5)'''
 
 '''learner = ISLearner(gamma, pf, lstd_q, lstd_v, grad_est, seed)
 a = learner.collect_samples(source_tasks[2], n_source_samples[2], source_policies[2])
-w = learner.calculate_density_ratios_dseta(a, source_tasks[2], target_task, source_policies[2], target_policy)
+w = learner.calculate_density_ratios_zeta(a, source_tasks[2], target_task, source_policies[2], target_policy)
 w4 = learner.calculate_density_ratios_transition(a, source_tasks[2], target_task, source_policies[2], target_policy)
 w5 = learner.calculate_density_ratios_policy(a, source_tasks[2], target_task, source_policies[2], target_policy)
 g = target_policy.log_gradient_matrix.copy()
-g = np.transpose(g, axes=(2, 0, 1)) * (target_task.env.Q * target_task.env.dseta_distr)
+g = np.transpose(g, axes=(2, 0, 1)) * (target_task.env.Q * target_task.env.zeta_distr)
 g = np.transpose(g, axes=(1, 2, 0)).sum(axis=(0, 1))
 Qs = lstd_q.fit(a, predict=True, weights=w*w4*w5)
 Vs = lstd_v.fit(a, predict=True, weights=w*w4)

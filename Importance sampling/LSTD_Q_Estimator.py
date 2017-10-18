@@ -93,7 +93,7 @@ class LSTD_Q_Estimator:
 
 
     def add_sources(self, source_datasets):
-        if self.source_phi_sa is None and self.source_phi_nsa is None and self.source_rewards is not None:
+        if self.source_phi_sa is None and self.source_phi_nsa is None and self.source_rewards is None:
             self.source_phi_sa = self.map_to_feature_space(np.vstack([sd['fs'] for sd in source_datasets]),
                                                            np.hstack([sd['a'] for sd in source_datasets]))
             self.source_phi_nsa = self.map_to_feature_space(np.vstack([sd['ns'] for sd in source_datasets]),

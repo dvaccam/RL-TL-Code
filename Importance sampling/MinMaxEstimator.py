@@ -9,369 +9,320 @@ class MinMaxWeightsEstimator():
         self.gamma = gamma
         
         
-    def add_sources(self, source_samples, source_tasks, source_policies, source_samples_source_Qs, phi_all_q):
-        self.phi_all_q = phi_all_q
-        source1 = gym.make('MountainCarContinuous-v0', min_position=-10., max_position=10., min_action=-1.,
-                         max_action=1., power=0., seed=None, model='S', discrete=True, n_position_bins=source_tasks[0].env.position_bins.shape[0],
-                         n_velocity_bins=source_tasks[0].env.velocity_bins.shape[0], n_action_bins=source_tasks[0].env.action_bins.shape[0], position_noise=0.025, velocity_noise=0.025)
-        source2 = gym.make('MountainCarContinuous-v0', min_position=-10., max_position=10., min_action=-1.,
-                              max_action=1., power=0.5, seed=None, model='S', discrete=True,
+    def add_sources(self, source_samples, source_tasks, source_policies):
+        min_power = 0.
+        max_power = 0.5
+        min_source = gym.make('MountainCarContinuous-v0', min_position=-10., max_position=10., min_action=-1., max_action=1.,
+                              power=min_power, seed=None, model='S', discrete=True,
                               n_position_bins=source_tasks[0].env.position_bins.shape[0],
                               n_velocity_bins=source_tasks[0].env.velocity_bins.shape[0],
-                              n_action_bins=source_tasks[0].env.action_bins.shape[0], position_noise=0.025,
-                              velocity_noise=0.025)
+                              n_action_bins=source_tasks[0].env.action_bins.shape[0],
+                              position_noise=0.025, velocity_noise=0.025)
+        max_source = gym.make('MountainCarContinuous-v0', min_position=-10., max_position=10., min_action=-1., max_action=1.,
+                              power=max_power, seed=None, model='S', discrete=True,
+                              n_position_bins=source_tasks[0].env.position_bins.shape[0],
+                              n_velocity_bins=source_tasks[0].env.velocity_bins.shape[0],
+                              n_action_bins=source_tasks[0].env.action_bins.shape[0],
+                              position_noise=0.025, velocity_noise=0.025)
+
         self.source_samples = source_samples
         self.source_tasks = source_tasks
         self.source_policies = source_policies
         self.m = len(source_tasks)
-        self.a_max = source_policies[0].factory.action_reps[-1]
-        self.R1 = - 0.1 * (2. ** self.a_max)
-        self.R2 = 100.
-        self.R = np.max(np.abs([self.R1, self.R2]))
 
-        self.M_P_s_prime = np.zeros((self.m, source_tasks[0].env.V.shape[0]), dtype=np.float64)
         self.L_P_eps_s_a_s_prime = np.zeros((self.m,) + source_tasks[0].env.transition_matrix.shape, dtype=np.float64)
         self.L_P_eps_s_prime = np.zeros((self.m, source_tasks[0].env.V.shape[0]), dtype=np.float64)
-        self.L_P_eps_theta_s_s_prime = np.zeros(
-            (self.m, source_tasks[0].env.V.shape[0], source_tasks[0].env.V.shape[0]), dtype=np.float64)
-        self.L_Q = np.zeros(self.m, dtype=np.float64)
-        self.M_Q_sa = np.zeros((self.m,) + source_tasks[0].env.Q.shape, dtype=np.float64)
-        self.L_zeta = np.zeros((self.m,) + source_tasks[0].env.Q.shape, dtype=np.float64)
-        self.L_P_eps_theta_s = np.zeros((self.m, source_tasks[0].env.V.shape[0]), dtype=np.float64)
-        self.M_P_a = np.zeros((self.m, source_tasks[0].env.Q.shape[1]), dtype=np.float64)
-        self.L_P_eps_a = np.abs(source_policies[0].factory.action_reps) * (
-        1. / source_tasks[0].env.position_noise + 1. / source_tasks[0].env.velocity_noise) / (np.sqrt(2. * np.pi))
-        self.L_delta = np.zeros((self.m, source_tasks[0].env.V.shape[0]), dtype=np.float64)
-        self.L_eta = np.zeros((self.m,) + source_tasks[0].env.Q.shape + (2,), dtype=np.float64)
-        self.L_J = np.zeros((self.m, 2), dtype=np.float64)
+        self.delta_P_eps_theta_s_s_prime = np.zeros((self.m, source_tasks[0].env.V.shape[0], source_tasks[0].env.V.shape[0]), dtype=np.float64)
+        self.delta_P_eps_theta_s = np.zeros((self.m, source_tasks[0].env.V.shape[0]), dtype=np.float64)
+        self.delta_zeta = np.zeros((self.m,) + source_tasks[0].env.Q.shape, dtype=np.float64)
+        self.delta_delta = np.zeros((self.m, source_tasks[0].env.V.shape[0]), dtype=np.float64)
+        self.delta_J = np.zeros((self.m, 2), dtype=np.float64)
         self.ns = np.zeros(self.m, dtype=np.int64)
-        for i in range(self.m):
-            self.M_P_s_prime[i] = source_tasks[i].env.transition_matrix.max(axis=(0, 1))
 
+        for j in range(self.m):
             for s in range(source_tasks[0].env.transition_matrix.shape[0]):
-                mu_max_pos = np.zeros(source_tasks[i].env.position_reps.shape[0], dtype=np.float64)
-                mu_max_vel = np.zeros(source_tasks[i].env.velocity_reps.shape[0], dtype=np.float64)
-                for p_p in range(source_tasks[i].env.position_reps.shape[0]):
-                    if p_p != 0 and p_p != source_tasks[i].env.position_reps.shape[0] - 1:
-                        p1 = source_tasks[i].env.position_bins[p_p]
-                        p2 = source_tasks[i].env.position_bins[p_p + 1]
-
+                mu_peak_pos_e = np.zeros(source_tasks[j].env.position_reps.shape[0], dtype=np.float64)
+                mu_peak_vel_e = np.zeros(source_tasks[j].env.velocity_reps.shape[0], dtype=np.float64)
+                for pos_prime in range(source_tasks[j].env.position_reps.shape[0]):
+                    if pos_prime != 0 and pos_prime != source_tasks[j].env.position_reps.shape[0] - 1:
+                        p1 = source_tasks[j].env.position_bins[pos_prime]
+                        p2 = source_tasks[j].env.position_bins[pos_prime + 1]
                         def f(x):
-                            return (np.log(p2 - x) - np.log(p1 - x) + (p1 ** 2 - p2 ** 2) / (
-                            2. * source_tasks[i].env.position_noise ** 2)) / (
-                                   (p1 - p2) / source_tasks[i].env.position_noise ** 2) - x
-
-                        mu_max_pos[p_p] = root(f, p1 - 0.1).x
-                for v_p in range(source_tasks[i].env.velocity_reps.shape[0]):
-                    if v_p != 0 and v_p != source_tasks[i].env.velocity_reps.shape[0] - 1:
-                        v1 = source_tasks[i].env.velocity_bins[v_p]
-                        v2 = source_tasks[i].env.velocity_bins[v_p + 1]
-
+                            return (np.log(p2 - x) - np.log(p1 - x) + (p1 ** 2 - p2 ** 2) / (2. * source_tasks[j].env.position_noise ** 2)) / ((p1 - p2) / source_tasks[j].env.position_noise ** 2) - x
+                        mu_peak_pos_e[pos_prime] = root(f, p1 - 0.1).x
+                for vel_prime in range(source_tasks[j].env.velocity_reps.shape[0]):
+                    if vel_prime != 0 and vel_prime != source_tasks[j].env.velocity_reps.shape[0] - 1:
+                        v1 = source_tasks[j].env.velocity_bins[vel_prime]
+                        v2 = source_tasks[j].env.velocity_bins[vel_prime + 1]
                         def f(x):
-                            return (np.log(v2 - x) - np.log(v1 - x) + (v1 ** 2 - v2 ** 2) / (
-                            2. * source_tasks[i].env.velocity_noise ** 2)) / (
-                                   (v1 - v2) / source_tasks[i].env.velocity_noise ** 2) - x
-
-                        mu_max_vel[v_p] = root(f, v1 - 0.01).x
+                            return (np.log(v2 - x) - np.log(v1 - x) + (v1 ** 2 - v2 ** 2) / (2. * source_tasks[j].env.velocity_noise ** 2)) / ((v1 - v2) / source_tasks[j].env.velocity_noise ** 2) - x
+                        mu_peak_vel_e[vel_prime] = root(f, v1 - 0.01).x
                 for a in range(source_tasks[0].env.transition_matrix.shape[1]):
-                    M_e_pos = np.zeros(source_tasks[i].env.position_reps.shape[0], dtype=np.float64)
-                    M_e_vel = np.zeros(source_tasks[i].env.velocity_reps.shape[0], dtype=np.float64)
-                    M_P_pos = np.zeros(source_tasks[i].env.position_reps.shape[0], dtype=np.float64)
-                    M_P_vel = np.zeros(source_tasks[i].env.velocity_reps.shape[0], dtype=np.float64)
-                    mu1 = source1.env.clean_step(source_tasks[i].env.state_reps[s],
-                                                 source_tasks[i].env.action_reps[a:a + 1])
-                    mu2 = source2.env.clean_step(source_tasks[i].env.state_reps[s],
-                                                 source_tasks[i].env.action_reps[a:a + 1])
-                    for p_p in range(source_tasks[i].env.position_reps.shape[0]):
-                        if p_p == 0 or p_p == source_tasks[i].env.position_reps.shape[0] - 1:
-                            if p_p == 0:
-                                eps_max = (source_tasks[i].env.position_bins[1] - source_tasks[i].env.state_reps[
-                                    s].sum() + source_tasks[i].env.rescale(0.0025) * math.cos(
-                                    3 * source_tasks[i].env.inverse_transform(source_tasks[i].env.state_reps[s][0]))) / \
-                                          source_tasks[i].env.action_reps[a]
-                                if eps_max < 0 or eps_max > 0.5:
-                                    M_e_pos[p_p] = max(np.exp(-(source_tasks[i].env.position_bins[1] - mu1[0]) ** 2 / (
-                                    2. * source_tasks[i].env.position_noise ** 2)),
-                                                       np.exp(-(source_tasks[i].env.position_bins[1] - mu2[0]) ** 2 / (
-                                                       2. * source_tasks[i].env.position_noise ** 2)))
-                                else:
-                                    M_e_pos[p_p] = max(np.exp(-(source_tasks[i].env.position_bins[-2] - mu1[0]) ** 2 / (
-                                    2. * source_tasks[i].env.position_noise ** 2)),
-                                                       np.exp(-(source_tasks[i].env.position_bins[-2] - mu2[0]) ** 2 / (
-                                                       2. * source_tasks[i].env.position_noise ** 2)))
-                                M_P_pos[p_p] = max((1. - erf((source_tasks[i].env.position_bins[-2] - mu1[0]) / (
-                                np.sqrt(2.) * source_tasks[i].env.position_noise))) / 2.,
-                                                   (1. - erf((source_tasks[i].env.position_bins[-2] - mu2[0]) / (
-                                                   np.sqrt(2.) * source_tasks[i].env.position_noise))) / 2.)
-                                M_P_pos[p_p] = max((1. + erf((source_tasks[i].env.position_bins[1] - mu1[0]) / (
-                                np.sqrt(2.) * source_tasks[i].env.position_noise))) / 2.,
-                                                   (1. + erf((source_tasks[i].env.position_bins[1] - mu2[0]) / (
-                                                   np.sqrt(2.) * source_tasks[i].env.position_noise))) / 2.)
+                    M_e_pos = np.zeros(source_tasks[j].env.position_reps.shape[0], dtype=np.float64)
+                    M_e_vel = np.zeros(source_tasks[j].env.velocity_reps.shape[0], dtype=np.float64)
+                    M_P_pos = np.zeros(source_tasks[j].env.position_reps.shape[0], dtype=np.float64)
+                    M_P_vel = np.zeros(source_tasks[j].env.velocity_reps.shape[0], dtype=np.float64)
+                    mu_min_source = min_source.env.clean_step(source_tasks[j].env.state_reps[s],
+                                                              source_tasks[j].env.action_reps[a:a + 1])
+                    mu_max_source = max_source.env.clean_step(source_tasks[j].env.state_reps[s],
+                                                              source_tasks[j].env.action_reps[a:a + 1])
+                    for pos_prime in range(source_tasks[j].env.position_reps.shape[0]):
+                        if pos_prime == 0:
+                            eps_peak =\
+                                (source_tasks[j].env.position_bins[1] - source_tasks[j].env.state_reps[s].sum() +
+                                 source_tasks[j].env.rescale(0.0025) * math.cos(3 * source_tasks[j].env.inverse_transform(source_tasks[j].env.state_reps[s][0]))) / \
+                                source_tasks[j].env.action_reps[a]
+                            if eps_peak < min_power or eps_peak > max_power:
+                                M_e_pos[pos_prime] = max(np.exp(-(source_tasks[j].env.position_bins[1] - mu_min_source[0]) ** 2 /
+                                                                (2. * source_tasks[j].env.position_noise ** 2)),
+                                                         np.exp(-(source_tasks[j].env.position_bins[1] - mu_max_source[0]) ** 2 /
+                                                                (2. * source_tasks[j].env.position_noise ** 2)))
                             else:
-                                M_e_pos[p_p] = 1.
-                                M_P_pos[p_p] = 0.5
+                                M_e_pos[pos_prime] = 1.
+                            eps_peak =\
+                                (source_tasks[j].env.position_bins[0] - source_tasks[j].env.state_reps[s].sum() +
+                                 source_tasks[j].env.rescale(0.0025) * math.cos(3 * source_tasks[j].env.inverse_transform(source_tasks[j].env.state_reps[s][0]))) / \
+                                source_tasks[j].env.action_reps[a]
+                            if eps_peak < min_power or eps_peak > max_power:
+                                M_P_pos[pos_prime] = max((1. + erf((source_tasks[j].env.position_bins[1] - mu_min_source[0]) /
+                                                                   (np.sqrt(2.) * source_tasks[j].env.position_noise))) / 2.,
+                                                         (1. + erf((source_tasks[j].env.position_bins[1] - mu_max_source[0]) /
+                                                                   (np.sqrt(2.) * source_tasks[j].env.position_noise))) / 2.)
+                            else:
+                                M_P_pos[pos_prime] = (1. + erf((source_tasks[j].env.position_bins[1] - source_tasks[j].env.position_bins[0]) /
+                                                               (np.sqrt(2.) * source_tasks[j].env.position_noise))) / 2.
+                        elif pos_prime == source_tasks[j].env.position_reps.shape[0] - 1:
+                            eps_peak = \
+                                (source_tasks[j].env.position_bins[-2] - source_tasks[j].env.state_reps[s].sum() +
+                                 source_tasks[j].env.rescale(0.0025) * math.cos(3 * source_tasks[j].env.inverse_transform(source_tasks[j].env.state_reps[s][0]))) / \
+                                source_tasks[j].env.action_reps[a]
+                            if eps_peak < min_power or eps_peak > max_power:
+                                M_e_pos[pos_prime] = max(np.exp(-(source_tasks[j].env.position_bins[-2] - mu_min_source[0]) ** 2 /
+                                                                (2. * source_tasks[j].env.position_noise ** 2)),
+                                                         np.exp(-(source_tasks[j].env.position_bins[-2] - mu_max_source[0]) ** 2 /
+                                                                (2. * source_tasks[j].env.position_noise ** 2)))
+                            else:
+                                M_e_pos[pos_prime] = 1.
+                            eps_peak =\
+                                (source_tasks[j].env.position_bins[-1] - source_tasks[j].env.state_reps[s].sum() +
+                                 source_tasks[j].env.rescale(0.0025) * math.cos(3 * source_tasks[j].env.inverse_transform(source_tasks[j].env.state_reps[s][0]))) / \
+                                source_tasks[j].env.action_reps[a]
+                            if eps_peak < min_power or eps_peak > max_power:
+                                M_P_pos[pos_prime] = max((1. - erf((source_tasks[j].env.position_bins[-2] - mu_min_source[0]) /
+                                                                   (np.sqrt(2.) * source_tasks[j].env.position_noise))) / 2.,
+                                                         (1. - erf((source_tasks[j].env.position_bins[-2] - mu_max_source[0]) /
+                                                                   (np.sqrt(2.) * source_tasks[j].env.position_noise))) / 2.)
+                            else:
+                                M_P_pos[pos_prime] = (1. - erf((source_tasks[j].env.position_bins[-2] - source_tasks[j].env.position_bins[-1]) /
+                                                               (np.sqrt(2.) * source_tasks[j].env.position_noise))) / 2.
                         else:
-                            p1 = source_tasks[i].env.position_bins[p_p]
-                            p2 = source_tasks[i].env.position_bins[p_p + 1]
+                            p1 = source_tasks[j].env.position_bins[pos_prime]
+                            p2 = source_tasks[j].env.position_bins[pos_prime + 1]
                             pm = (p1 + p2) / 2.
-                            mu_max = mu_max_pos[p_p]
-                            if mu_max < p1:
-                                mu_max1 = mu_max
-                                mu_max2 = 2 * pm - mu_max
+                            mu_peak = mu_peak_pos_e[pos_prime]
+                            if mu_peak < p1:
+                                mu_peak1 = mu_peak
+                                mu_peak2 = 2 * pm - mu_peak
                             else:
-                                mu_max2 = mu_max
-                                mu_max1 = 2 * pm - mu_max
-                            eps_max1 = (mu_max1 - source_tasks[i].env.state_reps[s].sum() + source_tasks[i].env.rescale(
-                                0.0025) * math.cos(
-                                3 * source_tasks[i].env.inverse_transform(source_tasks[i].env.state_reps[s][0]))) / \
-                                       source_tasks[i].env.action_reps[a]
-                            eps_max2 = (mu_max2 - source_tasks[i].env.state_reps[s].sum() + source_tasks[i].env.rescale(
-                                0.0025) * math.cos(
-                                3 * source_tasks[i].env.inverse_transform(source_tasks[i].env.state_reps[s][0]))) / \
-                                       source_tasks[i].env.action_reps[a]
-                            eps_max = (pm - source_tasks[i].env.state_reps[s].sum() + source_tasks[i].env.rescale(
-                                0.0025) * math.cos(
-                                3 * source_tasks[i].env.inverse_transform(source_tasks[i].env.state_reps[s][0]))) / \
-                                      source_tasks[i].env.action_reps[a]
-                            if (eps_max1 < 0 or eps_max1 > 0.5) and (eps_max2 < 0 or eps_max2 > 0.5):
-                                M_e_pos[p_p] = max(np.exp(
-                                    -(p1 - mu1[0]) ** 2 / (2 * source_tasks[i].env.position_noise ** 2)) - np.exp(
-                                    -(p2 - mu1[0]) ** 2 / (2 * source_tasks[i].env.position_noise ** 2)),
-                                                   np.exp(-(p1 - mu2[0]) ** 2 / (
-                                                   2 * source_tasks[i].env.position_noise ** 2)) - np.exp(
-                                                       -(p2 - mu2[0]) ** 2 / (
-                                                       2 * source_tasks[i].env.position_noise ** 2)))
+                                mu_peak2 = mu_peak
+                                mu_peak1 = 2 * pm - mu_peak
+                            eps_peak1 =\
+                                (mu_peak1 - source_tasks[j].env.state_reps[s].sum() +
+                                 source_tasks[j].env.rescale(0.0025) * math.cos(3 * source_tasks[j].env.inverse_transform(source_tasks[j].env.state_reps[s][0]))) / \
+                                source_tasks[j].env.action_reps[a]
+                            eps_peak2 =\
+                                (mu_peak2 - source_tasks[j].env.state_reps[s].sum() +
+                                 source_tasks[j].env.rescale(0.0025) * math.cos(3 * source_tasks[j].env.inverse_transform(source_tasks[j].env.state_reps[s][0]))) / \
+                                source_tasks[j].env.action_reps[a]
+                            if (eps_peak1 < min_power or eps_peak1 > max_power) and (eps_peak2 < min_power or eps_peak2 > max_power):
+                                M_e_pos[pos_prime] = max(np.abs(np.exp(-(p1 - mu_min_source[0]) ** 2 /
+                                                                       (2 * source_tasks[j].env.position_noise ** 2)) -
+                                                                np.exp(-(p2 - mu_min_source[0]) ** 2 /
+                                                                       (2 * source_tasks[j].env.position_noise ** 2))),
+                                                         np.abs(np.exp(-(p1 - mu_max_source[0]) ** 2 /
+                                                                       (2 * source_tasks[j].env.position_noise ** 2))
+                                                                - np.exp(-(p2 - mu_max_source[0]) ** 2 /
+                                                                         (2 * source_tasks[j].env.position_noise ** 2))))
                             else:
-                                M_e_pos[p_p] = np.abs(np.exp(
-                                    -(p1 - mu_max) ** 2 / (2 * source_tasks[i].env.position_noise ** 2)) - np.exp(
-                                    -(p2 - mu_max) ** 2 / (2 * source_tasks[i].env.position_noise ** 2)))
-
-                            if eps_max < 0 or eps_max > 0.5:
-                                M_P_pos[p_p] = max((erf(
-                                    (p2 - mu1[0]) / (np.sqrt(2.) * source_tasks[i].env.position_noise)) - erf(
-                                    (p1 - mu1[0]) / (np.sqrt(2.) * source_tasks[i].env.position_noise))) / 2.,
-                                                   (erf((p2 - mu2[0]) / (
-                                                   np.sqrt(2.) * source_tasks[i].env.position_noise)) - erf(
-                                                       (p1 - mu2[0]) / (
-                                                       np.sqrt(2.) * source_tasks[i].env.position_noise))) / 2.)
+                                M_e_pos[pos_prime] =\
+                                    np.abs(np.exp(-(p1 - mu_peak) ** 2 / (2 * source_tasks[j].env.position_noise ** 2)) -
+                                           np.exp(-(p2 - mu_peak) ** 2 / (2 * source_tasks[j].env.position_noise ** 2)))
+                            eps_peak =\
+                                (pm - source_tasks[j].env.state_reps[s].sum() +
+                                 source_tasks[j].env.rescale(0.0025) * math.cos(3 * source_tasks[j].env.inverse_transform(source_tasks[j].env.state_reps[s][0]))) / \
+                                source_tasks[j].env.action_reps[a]
+                            if eps_peak < min_power or eps_peak > max_power:
+                                M_P_pos[pos_prime] =\
+                                    max((erf((p2 - mu_min_source[0]) /(np.sqrt(2.) * source_tasks[j].env.position_noise)) -
+                                         erf((p1 - mu_min_source[0]) / (np.sqrt(2.) * source_tasks[j].env.position_noise))) / 2.,
+                                        (erf((p2 - mu_max_source[0]) / (np.sqrt(2.) * source_tasks[j].env.position_noise)) -
+                                         erf((p1 - mu_max_source[0]) / (np.sqrt(2.) * source_tasks[j].env.position_noise))) / 2.)
                             else:
-                                M_P_pos[p_p] = (erf(
-                                    (p2 - pm) / (np.sqrt(2.) * source_tasks[i].env.position_noise)) - erf(
-                                    (p1 - pm) / (np.sqrt(2.) * source_tasks[i].env.position_noise))) / 2.
-                    for v_p in range(source_tasks[i].env.velocity_reps.shape[0]):
-                        aux1 = source_tasks[i].env.state_reps[s][1] + source_tasks[i].env.action_reps[a] * 0. - \
-                               source_tasks[i].env.rescale(0.0025) * math.cos(
-                                   3 * source_tasks[i].env.inverse_transform(source_tasks[i].env.state_reps[s][0]))
-                        aux2 = source_tasks[i].env.state_reps[s][1] + source_tasks[i].env.action_reps[a] * 0.5 - \
-                               source_tasks[i].env.rescale(0.0025) * math.cos(
-                                   3 * source_tasks[i].env.inverse_transform(source_tasks[i].env.state_reps[s][0]))
-                        aux1, aux2 = np.clip([aux1, aux2], source_tasks[i].env.min_speed, source_tasks[i].env.max_speed)
-                        if v_p == 0 or v_p == source_tasks[i].env.velocity_reps.shape[0] - 1:
-                            eps_max = (source_tasks[i].env.velocity_reps[v_p] - source_tasks[i].env.state_reps[s][1] +
-                                       source_tasks[i].env.rescale(0.0025) * math.cos(
-                                           3 * source_tasks[i].env.inverse_transform(
-                                               source_tasks[i].env.state_reps[s][0]))) / \
-                                      source_tasks[i].env.action_reps[a]
-                            if (eps_max < 0 or eps_max > 0.5) and (
-                                not (aux1 < 0 and mu1[0] == source_tasks[i].env.position_bins[1]) and not (
-                                    aux2 < 0 and mu2[0] == source_tasks[i].env.position_bins[1])):
-                                if v_p == 0:
-                                    M_e_vel[v_p] = max(np.exp(-(source_tasks[i].env.velocity_bins[1] - mu1[1]) ** 2 / (
-                                    2. * source_tasks[i].env.velocity_noise ** 2)),
-                                                       np.exp(-(source_tasks[i].env.velocity_bins[1] - mu1[1]) ** 2 / (
-                                                       2. * source_tasks[i].env.velocity_noise ** 2)))
-                                    M_P_vel[v_p] = max((1. + erf((source_tasks[i].env.velocity_bins[1] - mu1[1]) / (
-                                    np.sqrt(2.) * source_tasks[i].env.velocity_noise))) / 2.,
-                                                       (1. + erf((source_tasks[i].env.velocity_bins[1] - mu2[1]) / (
-                                                       np.sqrt(2.) * source_tasks[i].env.velocity_noise))) / 2.)
-                                else:
-                                    M_e_vel[v_p] = max(np.exp(-(source_tasks[i].env.velocity_bins[-2] - mu1[1]) ** 2 / (
-                                    2. * source_tasks[i].env.velocity_noise ** 2)),
-                                                       np.exp(-(source_tasks[i].env.velocity_bins[-2] - mu1[1]) ** 2 / (
-                                                       2. * source_tasks[i].env.velocity_noise ** 2)))
-                                    M_P_vel[v_p] = max((1. + erf((source_tasks[i].env.velocity_bins[-2] - mu1[1]) / (
-                                    np.sqrt(2.) * source_tasks[i].env.velocity_noise))) / 2.,
-                                                       (1. + erf((source_tasks[i].env.velocity_bins[-2] - mu2[1]) / (
-                                                       np.sqrt(2.) * source_tasks[i].env.velocity_noise))) / 2.)
+                                M_P_pos[pos_prime] = (erf((p2 - pm) / (np.sqrt(2.) * source_tasks[j].env.position_noise)) -
+                                                      erf((p1 - pm) / (np.sqrt(2.) * source_tasks[j].env.position_noise))) / 2.
+                    for vel_prime in range(source_tasks[j].env.velocity_reps.shape[0]):
+                        real_vel_min_source =\
+                            source_tasks[j].env.state_reps[s][1] + source_tasks[j].env.action_reps[a] * 0. -\
+                            source_tasks[j].env.rescale(0.0025) * math.cos(3 * source_tasks[j].env.inverse_transform(source_tasks[j].env.state_reps[s][0]))
+                        real_vel_max_source =\
+                            source_tasks[j].env.state_reps[s][1] + source_tasks[j].env.action_reps[a] * 0.5 - \
+                            source_tasks[j].env.rescale(0.0025) * math.cos(3 * source_tasks[j].env.inverse_transform(source_tasks[j].env.state_reps[s][0]))
+                        real_vel_min_source, real_vel_max_source = np.clip([real_vel_min_source, real_vel_max_source], source_tasks[j].env.min_speed, source_tasks[j].env.max_speed)
+                        if vel_prime == 0:
+                            eps_peak =\
+                                (source_tasks[j].env.velocity_bins[1] - source_tasks[j].env.state_reps[s][1] +
+                                 source_tasks[j].env.rescale(0.0025) * math.cos(3 * source_tasks[j].env.inverse_transform(source_tasks[j].env.state_reps[s][0]))) / \
+                                source_tasks[j].env.action_reps[a]
+                            if (eps_peak < min_power or eps_peak > max_power) and\
+                                (not (real_vel_min_source < 0 and mu_min_source[0] <= source_tasks[j].env.position_bins[1]) and
+                                 not (real_vel_max_source < 0 and mu_max_source[0] <= source_tasks[j].env.position_bins[1])):
+                                M_e_vel[vel_prime] = max(np.exp(-(source_tasks[j].env.velocity_bins[1] - mu_min_source[1]) ** 2 /
+                                                                (2. * source_tasks[j].env.velocity_noise ** 2)),
+                                                         np.exp(-(source_tasks[j].env.velocity_bins[1] - mu_max_source[1]) ** 2 /
+                                                                (2. * source_tasks[j].env.velocity_noise ** 2)))
                             else:
-                                M_e_vel[v_p] = 1.
-                                M_P_vel[v_p] = 0.5
+                                M_e_vel[vel_prime] = 1.
+                            eps_peak  =\
+                                (source_tasks[j].env.velocity_bins[0] - source_tasks[j].env.state_reps[s][1] +
+                                 source_tasks[j].env.rescale(0.0025) * math.cos(3 * source_tasks[j].env.inverse_transform(source_tasks[j].env.state_reps[s][0]))) / \
+                                source_tasks[j].env.action_reps[a]
+                            if (eps_peak < min_power or eps_peak > max_power) and \
+                                (not (real_vel_min_source < 0 and mu_min_source[0] <= source_tasks[j].env.position_bins[1]) and
+                                 not (real_vel_max_source < 0 and mu_max_source[0] <= source_tasks[j].env.position_bins[1])):
+                                M_P_vel[vel_prime] = max((1. + erf((source_tasks[j].env.velocity_bins[1] - mu_min_source[1]) /
+                                                                   (np.sqrt(2.) * source_tasks[j].env.velocity_noise))) / 2.,
+                                                         (1. + erf((source_tasks[j].env.velocity_bins[1] - mu_max_source[1]) /
+                                                                   (np.sqrt(2.) * source_tasks[j].env.velocity_noise))) / 2.)
+                            else:
+                                M_P_vel[vel_prime] = (1. + erf((source_tasks[j].env.velocity_bins[1] - source_tasks[j].env.velocity_bins[0]) /
+                                                               (np.sqrt(2.) * source_tasks[j].env.velocity_noise))) / 2.
+                        elif vel_prime == source_tasks[j].env.velocity_reps.shape[0] - 1:
+                            eps_peak = \
+                                (source_tasks[j].env.velocity_bins[-2] - source_tasks[j].env.state_reps[s][1] +
+                                 source_tasks[j].env.rescale(0.0025) * math.cos(3 * source_tasks[j].env.inverse_transform(source_tasks[j].env.state_reps[s][0]))) / \
+                                source_tasks[j].env.action_reps[a]
+                            if (eps_peak < min_power or eps_peak > max_power) and \
+                                (not (real_vel_min_source < 0 and mu_min_source[0] <= source_tasks[j].env.position_bins[1]) and
+                                 not (real_vel_max_source < 0 and mu_max_source[0] <= source_tasks[j].env.position_bins[1])):
+                                M_e_vel[vel_prime] = max(
+                                    np.exp(-(source_tasks[j].env.velocity_bins[-2] - mu_min_source[1]) ** 2 /
+                                           (2. * source_tasks[j].env.velocity_noise ** 2)),
+                                    np.exp(-(source_tasks[j].env.velocity_bins[-2] - mu_max_source[1]) ** 2 /
+                                           (2. * source_tasks[j].env.velocity_noise ** 2)))
+                            else:
+                                M_e_vel[vel_prime] = 1.
+                            eps_peak = \
+                                (source_tasks[j].env.velocity_bins[-1] - source_tasks[j].env.state_reps[s][1] +
+                                 source_tasks[j].env.rescale(0.0025) * math.cos(3 * source_tasks[j].env.inverse_transform(source_tasks[j].env.state_reps[s][0]))) / \
+                                source_tasks[j].env.action_reps[a]
+                            if (eps_peak < min_power or eps_peak > max_power) and \
+                                (not (real_vel_min_source < 0 and mu_min_source[0] <= source_tasks[j].env.position_bins[1]) and
+                                 not (real_vel_max_source < 0 and mu_max_source[0] <= source_tasks[j].env.position_bins[1])):
+                                M_P_vel[vel_prime] = max((1. - erf((source_tasks[j].env.velocity_bins[-2] - mu_min_source[1]) /
+                                                                   (np.sqrt(2.) * source_tasks[j].env.velocity_noise))) / 2.,
+                                                         (1. - erf((source_tasks[j].env.velocity_bins[-2] - mu_max_source[1]) /
+                                                                   (np.sqrt(2.) * source_tasks[j].env.velocity_noise))) / 2.)
+                            else:
+                                M_P_vel[vel_prime] = (1. - erf((source_tasks[j].env.velocity_bins[-2] - source_tasks[j].env.velocity_bins[-1]) /
+                                                               (np.sqrt(2.) * source_tasks[j].env.velocity_noise))) / 2.
                         else:
-                            v1 = source_tasks[i].env.velocity_bins[v_p]
-                            v2 = source_tasks[i].env.velocity_bins[v_p + 1]
+                            v1 = source_tasks[j].env.velocity_bins[vel_prime]
+                            v2 = source_tasks[j].env.velocity_bins[vel_prime + 1]
                             vm = (v1 + v2) / 2.
-                            mu_max = mu_max_vel[v_p]
-                            if mu_max < v1:
-                                mu_max1 = mu_max
-                                mu_max2 = 2 * vm - mu_max
+                            mu_peak = mu_peak_vel_e[vel_prime]
+                            if mu_peak < v1:
+                                mu_peak1 = mu_peak
+                                mu_peak2 = 2 * vm - mu_peak
                             else:
-                                mu_max2 = mu_max
-                                mu_max1 = 2 * vm - mu_max
-                            eps_max1 = (mu_max1 - source_tasks[i].env.state_reps[s][1] + source_tasks[i].env.rescale(
-                                0.0025) * math.cos(
-                                3 * source_tasks[i].env.inverse_transform(source_tasks[i].env.state_reps[s][0]))) / \
-                                       source_tasks[i].env.action_reps[a]
-                            eps_max2 = (mu_max2 - source_tasks[i].env.state_reps[s][1] + source_tasks[i].env.rescale(
-                                0.0025) * math.cos(
-                                3 * source_tasks[i].env.inverse_transform(source_tasks[i].env.state_reps[s][0]))) / \
-                                       source_tasks[i].env.action_reps[a]
-                            eps_max = (vm - source_tasks[i].env.state_reps[s][1] + source_tasks[i].env.rescale(
-                                0.0025) * math.cos(
-                                3 * source_tasks[i].env.inverse_transform(source_tasks[i].env.state_reps[s][0]))) / \
-                                      source_tasks[i].env.action_reps[a]
-                            if (eps_max1 < 0 or eps_max1 > 0.5) and (eps_max2 < 0 or eps_max2 > 0.5) and (
-                                not (aux1 < 0 and mu1[0] == source_tasks[i].env.position_bins[1]) and not (
-                                    aux2 < 0 and mu2[0] == source_tasks[i].env.position_bins[1])):
-                                M_e_vel[v_p] = max(np.exp(
-                                    -(v1 - mu1[1]) ** 2 / (2 * source_tasks[i].env.velocity_noise ** 2)) - np.exp(
-                                    -(v2 - mu1[1]) ** 2 / (2 * source_tasks[i].env.velocity_noise ** 2)),
-                                                   np.exp(-(v1 - mu2[1]) ** 2 / (
-                                                   2 * source_tasks[i].env.velocity_noise ** 2)) - np.exp(
-                                                       -(v2 - mu2[1]) ** 2 / (
-                                                       2 * source_tasks[i].env.velocity_noise ** 2)))
+                                mu_peak2 = mu_peak
+                                mu_peak1 = 2 * vm - mu_peak
+                            eps_peak1 =\
+                                (mu_peak1 - source_tasks[j].env.state_reps[s][1] +
+                                 source_tasks[j].env.rescale(0.0025) * math.cos(3 * source_tasks[j].env.inverse_transform(source_tasks[j].env.state_reps[s][0]))) / \
+                                source_tasks[j].env.action_reps[a]
+                            eps_peak2 =\
+                                (mu_peak2 - source_tasks[j].env.state_reps[s][1] +
+                                 source_tasks[j].env.rescale(0.0025) * math.cos(3 * source_tasks[j].env.inverse_transform(source_tasks[j].env.state_reps[s][0]))) / \
+                                source_tasks[j].env.action_reps[a]
+                            if (eps_peak1 < min_power or eps_peak1 > max_power) and (eps_peak2 < min_power or eps_peak2 > max_power) and\
+                                (not (real_vel_min_source < 0 and mu_min_source[0] == source_tasks[j].env.position_bins[1]) and
+                                 not (real_vel_max_source < 0 and mu_max_source[0] == source_tasks[j].env.position_bins[1])):
+                                M_e_vel[vel_prime] =\
+                                    max(np.abs(np.exp(-(v1 - mu_min_source[1]) ** 2 / (2 * source_tasks[j].env.velocity_noise ** 2)) -
+                                               np.exp(-(v2 - mu_min_source[1]) ** 2 / (2 * source_tasks[j].env.velocity_noise ** 2))),
+                                        np.abs(np.exp(-(v1 - mu_max_source[1]) ** 2 / (2 * source_tasks[j].env.velocity_noise ** 2)) -
+                                               np.exp(-(v2 - mu_max_source[1]) ** 2 / (2 * source_tasks[j].env.velocity_noise ** 2))))
                             else:
-                                M_e_vel[v_p] = np.abs(np.exp(
-                                    -(v1 - mu_max) ** 2 / (2 * source_tasks[i].env.velocity_noise ** 2)) - np.exp(
-                                    -(v2 - mu_max) ** 2 / (2 * source_tasks[i].env.velocity_noise ** 2)))
-                            if (eps_max < 0 or eps_max > 0.5) and (
-                                not (aux1 < 0 and mu1[0] == source_tasks[i].env.position_bins[1]) and not (
-                                    aux2 < 0 and mu2[0] == source_tasks[i].env.position_bins[1])):
-                                M_P_vel[v_p] = max((erf(
-                                    (v2 - mu1[1]) / (np.sqrt(2.) * source_tasks[i].env.velocity_noise)) - erf(
-                                    (v1 - mu1[1]) / (np.sqrt(2.) * source_tasks[i].env.velocity_noise))) / 2.,
-                                                   (erf((v2 - mu2[1]) / (
-                                                   np.sqrt(2.) * source_tasks[i].env.velocity_noise)) - erf(
-                                                       (v1 - mu2[1]) / (
-                                                       np.sqrt(2.) * source_tasks[i].env.velocity_noise))) / 2.)
+                                M_e_vel[vel_prime] =\
+                                    np.abs(np.exp(-(v1 - mu_peak) ** 2 / (2 * source_tasks[j].env.velocity_noise ** 2)) -
+                                           np.exp(-(v2 - mu_peak) ** 2 / (2 * source_tasks[j].env.velocity_noise ** 2)))
+                            eps_peak =\
+                                (vm - source_tasks[j].env.state_reps[s][1] +
+                                 source_tasks[j].env.rescale(0.0025) * math.cos(3 * source_tasks[j].env.inverse_transform(source_tasks[j].env.state_reps[s][0]))) / \
+                                source_tasks[j].env.action_reps[a]
+                            if (eps_peak < min_power or eps_peak > max_power) and\
+                                (not (real_vel_min_source < 0 and mu_min_source[0] == source_tasks[j].env.position_bins[1]) and
+                                 not (real_vel_max_source < 0 and mu_max_source[0] == source_tasks[j].env.position_bins[1])):
+                                M_P_vel[vel_prime] =\
+                                    max((erf((v2 - mu_min_source[1]) / (np.sqrt(2.) * source_tasks[j].env.velocity_noise)) -
+                                         erf((v1 - mu_min_source[1]) / (np.sqrt(2.) * source_tasks[j].env.velocity_noise))) / 2.,
+                                        (erf((v2 - mu_max_source[1]) / (np.sqrt(2.) * source_tasks[j].env.velocity_noise)) -
+                                         erf((v1 - mu_max_source[1]) / (np.sqrt(2.) * source_tasks[j].env.velocity_noise))) / 2.)
                             else:
-                                M_P_vel[v_p] = (erf(
-                                    (v2 - vm) / (np.sqrt(2.) * source_tasks[i].env.velocity_noise)) - erf(
-                                    (v1 - vm) / (np.sqrt(2.) * source_tasks[i].env.velocity_noise))) / 2.
-                    self.L_P_eps_s_a_s_prime[i, s, a] = ((np.abs(source_tasks[i].env.action_reps[a]) / (
-                    np.sqrt(2. * np.pi) * source_tasks[i].env.velocity_noise)) * M_e_vel.reshape((-1, 1)).dot(
-                        M_P_pos.reshape((1, -1))) + (np.abs(source_tasks[i].env.action_reps[a]) / (
-                    np.sqrt(2. * np.pi) * source_tasks[i].env.position_noise)) * M_P_vel.reshape((-1, 1)).dot(
-                        M_e_pos.reshape((1, -1)))).flatten()
+                                M_P_vel[vel_prime] =\
+                                    (erf((v2 - vm) / (np.sqrt(2.) * source_tasks[j].env.velocity_noise)) -
+                                     erf((v1 - vm) / (np.sqrt(2.) * source_tasks[j].env.velocity_noise))) / 2.
+                    self.L_P_eps_s_a_s_prime[j, s, a] =\
+                        ((np.abs(source_tasks[j].env.action_reps[a]) / (np.sqrt(2. * np.pi) * source_tasks[j].env.velocity_noise)) * M_e_vel.reshape((-1, 1)).dot(M_P_pos.reshape((1, -1))) +
+                         (np.abs(source_tasks[j].env.action_reps[a]) / (np.sqrt(2. * np.pi) * source_tasks[j].env.position_noise)) * M_P_vel.reshape((-1, 1)).dot(M_e_pos.reshape((1, -1)))).flatten()
 
-            self.L_P_eps_s_prime[i] = self.L_P_eps_s_a_s_prime[i].max(axis=(0, 1))
+            self.L_P_eps_s_prime[j] = self.L_P_eps_s_a_s_prime[j].max(axis=(0, 1))
 
-            self.M_P_a[i] = source_tasks[i].env.transition_matrix.max(axis=(0, 2))
+            self.ns[j] = self.source_samples[j]['fs'].shape[0]
 
-            self.ns[i] = self.source_samples[i]['fs'].shape[0]
-
-            self.source_samples[i]['eta_j'] = source_policies[i].log_gradient_matrix[
-                                          source_samples[i]['fsi'], source_samples[i]['ai']] * source_samples_source_Qs[i].reshape((-1, 1))
-        '''self.M_P_s_prime = np.zeros((self.m, source_tasks[0].env.V.shape[0]), dtype=np.float64)
-        self.L_P_eps_s_prime = (1. / source_tasks[0].env.position_noise + 1. / source_tasks[
-            0].env.velocity_noise) * self.a_max / (
-                               np.sqrt(2. * np.pi))  # TODO: check, maybe a tighter bound (e. g. 1/2)
-        self.L_Q = np.zeros(self.m, dtype=np.float64)
-        self.M_Q_sa = np.zeros((self.m,) + source_tasks[0].env.Q.shape, dtype=np.float64)
-        self.L_zeta = np.zeros((self.m,) + source_tasks[0].env.Q.shape, dtype=np.float64)
-        self.L_P_eps_theta = np.zeros(self.m, dtype=np.float64)
-        self.M_P_a = np.zeros((self.m, source_tasks[0].env.Q.shape[1]), dtype=np.float64)
-        self.L_P_eps_a = np.abs(source_policies[0].factory.action_reps) * (
-        1. / source_tasks[0].env.position_noise + 1. / source_tasks[0].env.velocity_noise) / (np.sqrt(2. * np.pi))
-        self.L_delta = np.zeros((self.m, source_tasks[0].env.V.shape[0]), dtype=np.float64)
-        self.L_eta = np.zeros((self.m,) + source_tasks[0].env.Q.shape + (2,), dtype=np.float64)
-        self.L_J = np.zeros((self.m, 2), dtype=np.float64)
-        self.ns = np.zeros(self.m, dtype=np.int64)
-        for i in range(self.m):
-            self.M_P_s_prime[i] = source_tasks[i].env.transition_matrix.max(axis=(0, 1))
-
-            self.M_P_a[i] = source_tasks[i].env.transition_matrix.max(axis=(0, 2))
-
-            self.ns[i] = self.source_samples[i]['fs'].shape[0]
-
-            self.source_samples[i]['eta_j'] = source_policies[i].log_gradient_matrix[
-                                          source_samples[i]['fsi'], source_samples[i]['ai']] * source_samples_source_Qs[i].reshape((-1, 1))'''
+            self.source_samples[j]['eta_j'] =\
+                source_policies[j].log_gradient_matrix[source_samples[j]['fsi'], source_samples[j]['ai']] *\
+                source_tasks[j].env.Q[source_samples[j]['fsi'], source_samples[j]['ai']].reshape((-1, 1))
 
 
 
-    def estimate_weights(self, target_policy, target_eps, target_size, q_estimator, grad_J1, target_task):
-        Q_target = q_estimator.predict(s=None, a=None, phi_source=None, phi_target=self.phi_all_q).reshape(self.source_tasks[0].env.Q.shape)
+    def clean_sources(self):
+        pass
+
+
+
+    def estimate_weights(self, target_policy, target_power, target_size, target_Q, grad_J1):
         w_idx = np.hstack((0., self.ns)).cumsum().astype(np.int64)
         n = self.ns.sum() + target_size
         w0 = np.ones(n - target_size, dtype=np.float64)
         l_bounds = np.zeros_like(w0)
-        l_bounds1 = np.zeros_like(w0)
         u_bounds = np.zeros_like(w0)
-        u_bounds1 = np.zeros_like(w0)
         for i in range(self.m):
-            self.L_P_eps_theta_s_s_prime[i] = (self.source_tasks[i].env.transition_matrix*np.abs(self.source_policies[i].choice_matrix - target_policy.choice_matrix).reshape((target_policy.choice_matrix.shape) + (1,)) +
-                                               target_policy.choice_matrix.reshape(target_policy.choice_matrix.shape + (1,))*self.L_P_eps_s_a_s_prime[i]*np.abs(self.source_tasks[i].env.power - target_eps)).sum(axis=1)
-            self.L_P_eps_theta_s[i] = self.L_P_eps_theta_s_s_prime[i].max(axis=0)
-            self.L_delta[i] = (1. - self.gamma)*self.source_tasks[i].env.P_pi_inv.T.dot(0. + self.gamma * np.minimum(self.L_P_eps_theta_s[i], np.ones_like(self.L_P_eps_theta_s[i])))
+            self.delta_P_eps_theta_s_s_prime[i] =\
+                (self.source_tasks[i].env.transition_matrix * np.abs(self.source_policies[i].choice_matrix -
+                                                                     target_policy.choice_matrix).reshape((target_policy.choice_matrix.shape) + (1,)) +
+                 target_policy.choice_matrix.reshape(target_policy.choice_matrix.shape + (1,)) * self.L_P_eps_s_a_s_prime[i] * np.abs(self.source_tasks[i].env.power - target_power)).sum(axis=1)
+            self.delta_P_eps_theta_s[i] = self.delta_P_eps_theta_s_s_prime[i].max(axis=0)
+            self.delta_delta[i] = (1. - self.gamma) * self.source_tasks[i].env.P_pi_inv.T.dot(0. + self.gamma * np.minimum(self.delta_P_eps_theta_s[i], np.ones_like(self.delta_P_eps_theta_s[i])))
 
-            self.L_zeta[i] = self.source_tasks[i].env.delta_distr.reshape((-1,1))*np.abs(self.source_policies[i].choice_matrix - target_policy.choice_matrix) + target_policy.choice_matrix*np.minimum(self.L_delta[i], np.ones_like(self.L_delta[i])).reshape((-1,1))
+            self.delta_zeta[i] = self.source_tasks[i].env.delta_distr.reshape((-1, 1)) * np.abs(self.source_policies[i].choice_matrix -
+                                                                                                target_policy.choice_matrix) +\
+                                 target_policy.choice_matrix * np.minimum(self.delta_delta[i], np.ones_like(self.delta_delta[i])).reshape((-1, 1))
 
-            self.L_J[i] = ((target_policy.log_gradient_matrix*(Q_target*np.minimum(np.ones_like(self.L_zeta[i]),self.L_zeta[i])).reshape(Q_target.shape + (1,))) +
-                           self.source_tasks[i].env.dseta_distr.reshape(self.source_tasks[i].env.dseta_distr.shape + (1,))*(target_policy.log_gradient_matrix*Q_target.reshape(Q_target.shape + (1,)) -
-                                                                                                                            self.source_policies[i].log_gradient_matrix*self.source_tasks[i].env.Q.reshape(self.source_tasks[i].env.Q.shape + (1,)))).sum(axis=(0,1))
-            self.L_J[i] = ((target_policy.log_gradient_matrix*(Q_target*target_task.env.dseta_distr).reshape(Q_target.shape + (1,))).sum(axis=(0,1)) -
-                           (self.source_policies[i].log_gradient_matrix*(self.source_tasks[i].env.Q*self.source_tasks[i].env.dseta_distr).reshape(self.source_tasks[i].env.Q.shape + (1,))).sum(axis=(0,1)))
-            #self.L_J[i] = (np.abs(target_policy.log_gradient_matrix * (Q_target * (target_task.env.dseta_distr - self.source_tasks[i].env.dseta_distr)).reshape(Q_target.shape + (1,))) +
-            #               self.source_tasks[i].env.dseta_distr.reshape(self.source_tasks[i].env.dseta_distr.shape + (1,)) * np.abs(target_policy.log_gradient_matrix * Q_target.reshape(Q_target.shape + (1,)) -self.source_policies[i].log_gradient_matrix * self.source_tasks[i].env.Q.reshape(self.source_tasks[i].env.Q.shape + (1,)))).sum(axis=(0, 1))
-            #self.L_J[i] = (target_policy.log_gradient_matrix * (Q_target * np.clip(self.L_zeta[i], np.ones_like(self.L_zeta[i]),-np.ones_like(self.L_zeta[i]))).reshape(Q_target.shape + (1,))).sum(axis=(0, 1)) -\
-            #              (self.source_tasks[i].env.dseta_distr.reshape(self.source_tasks[i].env.dseta_distr.shape + (1,)) * (target_policy.log_gradient_matrix * Q_target.reshape(Q_target.shape + (1,)) -
-            #                                                                                                                  self.source_policies[i].log_gradient_matrix * self.source_tasks[i].env.Q.reshape(self.source_tasks[i].env.Q.shape + (1,)))).sum(axis=(0, 1))
-            self.L_J[i] = grad_J1 - (self.source_policies[i].log_gradient_matrix*(self.source_tasks[i].env.Q*self.source_tasks[i].env.dseta_distr).reshape(self.source_tasks[i].env.Q.shape + (1,))).sum(axis=(0,1))
+            self.delta_J[i] = grad_J1 - (self.source_policies[i].log_gradient_matrix * (self.source_tasks[i].env.Q * self.source_tasks[i].env.zeta_distr).reshape(self.source_tasks[i].env.Q.shape + (1,))).sum(axis=(0, 1))
 
-            self.source_samples[i]['eta_1'] = target_policy.log_gradient_matrix[self.source_samples[i]['fsi'], self.source_samples[i]['ai']] * Q_target[self.source_samples[i]['fsi'], self.source_samples[i]['ai']].reshape((-1, 1))
+            self.source_samples[i]['eta_1'] = target_policy.log_gradient_matrix[self.source_samples[i]['fsi'], self.source_samples[i]['ai']] * target_Q[w_idx[i]:w_idx[i+1]].reshape((-1, 1))
 
-            l_bounds[w_idx[i]:w_idx[i+1]] = np.maximum(np.zeros(self.ns[i], dtype=np.float64), w0 - np.minimum(np.ones_like(self.L_zeta[i]),self.L_zeta[i])[self.source_samples[i]['fsi'], self.source_samples[i]['ai']]/self.source_tasks[i].env.dseta_distr[self.source_samples[i]['fsi'], self.source_samples[i]['ai']])
-            #l_bounds[w_idx[i]:w_idx[i + 1]] = np.maximum(np.zeros(self.ns[i], dtype=np.float64), w0 - np.abs(target_task.env.dseta_distr[self.source_samples[i]['fsi'], self.source_samples[i]['ai']] - self.source_tasks[i].env.dseta_distr[self.source_samples[i]['fsi'], self.source_samples[i]['ai']]) / self.source_tasks[i].env.dseta_distr[self.source_samples[i]['fsi'], self.source_samples[i]['ai']])
-            u_bounds[w_idx[i]:w_idx[i + 1]] = w0 + np.minimum(np.ones_like(self.L_zeta[i]),self.L_zeta[i])[self.source_samples[i]['fsi'], self.source_samples[i]['ai']]/self.source_tasks[i].env.dseta_distr[self.source_samples[i]['fsi'], self.source_samples[i]['ai']]
-            #u_bounds[w_idx[i]:w_idx[i + 1]] = w0 + np.abs(target_task.env.dseta_distr[self.source_samples[i]['fsi'], self.source_samples[i]['ai']] - self.source_tasks[i].env.dseta_distr[self.source_samples[i]['fsi'], self.source_samples[i]['ai']]) / self.source_tasks[i].env.dseta_distr[self.source_samples[i]['fsi'], self.source_samples[i]['ai']]
-            '''self.L_Q[i] = ((0. + self.gamma * np.abs(self.source_tasks[i].env.Q) * (
-            self.M_P_s_prime[i].reshape((-1, 1)) * np.abs(
-                self.source_policies[i].choice_matrix - target_policy.choice_matrix) +
-            target_policy.choice_matrix * min(
-                self.L_P_eps_s_prime * np.abs(self.source_tasks[i].env.power - target_eps), 1.))) / (
-                           1. - self.gamma)).sum()
-
-            self.M_Q_sa[i] = np.minimum(np.full_like(self.source_tasks[i].env.Q, self.R / (1. - self.gamma)),
-                                        np.maximum(np.abs(self.source_tasks[i].env.Q + self.L_Q[i]),
-                                                   np.abs(self.source_tasks[i].env.Q - self.L_Q[i])))
-
-            self.L_P_eps_theta[i] = (
-            self.M_P_a[i] * np.abs(self.source_policies[i].choice_matrix - target_policy.choice_matrix).max(
-                axis=0) + target_policy.choice_matrix.max(axis=0) * self.L_P_eps_a * np.abs(
-                self.source_tasks[i].env.power - target_eps)).sum()
-            self.L_delta[i] = (0. + self.gamma * self.L_P_eps_theta[i]) * self.source_tasks[i].env.P_inf
-
-
-            self.L_zeta[i] = self.source_tasks[i].env.delta_distr.reshape((-1, 1)) * np.abs(
-                self.source_policies[i].choice_matrix - target_policy.choice_matrix) + target_policy.choice_matrix * \
-                                                                                       np.minimum(self.L_delta[i], np.ones_like(self.L_delta[i])).reshape((-1, 1))
-
-            self.L_eta[i] = np.abs(target_policy.log_gradient_matrix) * np.minimum(self.L_Q[i], (self.R2 - self.R1) / (
-            1. - self.gamma)) + np.abs(
-                self.source_tasks[i].env.Q.reshape((self.source_tasks[i].env.Q.shape) + (-1,)) * (
-                self.source_policies[i].log_gradient_matrix - target_policy.log_gradient_matrix))
-
-            self.L_J[i] = (np.abs(target_policy.log_gradient_matrix) * (
-            self.M_Q_sa[i] * np.minimum(np.ones_like(self.L_zeta[i]), self.L_zeta[i])).reshape(
-                (self.M_Q_sa[i].shape) + (1,)) + self.source_tasks[i].env.dseta_distr.reshape(
-                (self.source_tasks[i].env.dseta_distr.shape) + (1,)) * self.L_eta[i]).sum(axis=(0, 1))
-
-            self.source_samples[i]['eta_1'] = target_policy.log_gradient_matrix[
-                                                  self.source_samples[i]['fsi'], self.source_samples[i]['ai']] * source_samples_target_Qs[
-                                                  i].reshape((-1, 1))
-
-            l_bounds[w_idx[i]:w_idx[i + 1]] = np.maximum(np.zeros(self.ns[i], dtype=np.float64),
-                                                         w0 - np.minimum(np.ones_like(self.L_zeta[i]), self.L_zeta[i])[
-                                                             self.source_samples[i]['fsi'], self.source_samples[i][
-                                                                 'ai']] / self.source_tasks[i].env.dseta_distr[
-                                                             self.source_samples[i]['fsi'], self.source_samples[i][
-                                                                 'ai']])
-            u_bounds[w_idx[i]:w_idx[i + 1]] = w0 + np.minimum(np.ones_like(self.L_zeta[i]), self.L_zeta[i])[
-                                                   self.source_samples[i]['fsi'], self.source_samples[i]['ai']] / \
-                                               self.source_tasks[i].env.dseta_distr[
-                                                   self.source_samples[i]['fsi'], self.source_samples[i]['ai']]'''
+            l_bounds[w_idx[i]:w_idx[i+1]] = np.maximum(np.zeros(self.ns[i], dtype=np.float64),
+                                                       w0 - np.minimum(np.ones_like(self.delta_zeta[i]),
+                                                                       self.delta_zeta[i])[self.source_samples[i]['fsi'], self.source_samples[i]['ai']] /
+                                                       self.source_tasks[i].env.zeta_distr[self.source_samples[i]['fsi'], self.source_samples[i]['ai']])
+            u_bounds[w_idx[i]:w_idx[i + 1]] = w0 + np.minimum(np.ones_like(self.delta_zeta[i]),
+                                                              self.delta_zeta[i])[self.source_samples[i]['fsi'], self.source_samples[i]['ai']] /\
+                                                   self.source_tasks[i].env.zeta_distr[self.source_samples[i]['fsi'], self.source_samples[i]['ai']]
 
         def g(w):
-            bias = (self.L_J*self.ns.reshape((-1,1))).sum(axis=0)/n
+            bias = (self.delta_J * self.ns.reshape((-1, 1))).sum(axis=0) / n
             vari = 0.
             for j in range(self.m):
                 bias += (self.source_samples[j]['eta_j'] - w[w_idx[j]:w_idx[j+1]].reshape((-1,1))*self.source_samples[j]['eta_1']).sum(axis=0)/n
@@ -381,7 +332,7 @@ class MinMaxWeightsEstimator():
             return bias + vari
 
         def grad_g(w):
-            bias = (self.L_J * self.ns.reshape((-1, 1))).sum(axis=0) / n
+            bias = (self.delta_J * self.ns.reshape((-1, 1))).sum(axis=0) / n
             for j in range(self.m):
                 bias += (self.source_samples[j]['eta_j'] - w[w_idx[j]:w_idx[j + 1]].reshape((-1, 1)) * self.source_samples[j]['eta_1']).sum(axis=0) / n
             grad = np.zeros(w.shape + (2,), dtype=np.float64)
