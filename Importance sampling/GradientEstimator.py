@@ -1,7 +1,8 @@
 import numpy as np
 
 class GradientEstimator:
-    def __init__(self, baseline_type):
+    def __init__(self, gamma, baseline_type):
+        self.gamma = gamma
         self.baseline_type = baseline_type
         self.use_source = False
 
@@ -27,10 +28,10 @@ class GradientEstimator:
             gradient = log_gradient*Q.reshape((-1,1)).copy()
             if source_weights is not None:
                 gradient = gradient*weights.reshape((-1,1))
-            gradient = gradient.mean(axis=0)
+            gradient = gradient.mean(axis=0)/(1. - self.gamma)
         if self.baseline_type == 1:
             gradient = log_gradient*(Q-V).reshape((-1,1))
             if source_weights is not None:
                 gradient = gradient*weights.reshape((-1,1))
-            gradient = gradient.mean(axis=0)
+            gradient = gradient.mean(axis=0)/(1. - self.gamma)
         return gradient

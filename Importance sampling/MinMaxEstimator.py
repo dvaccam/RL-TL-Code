@@ -309,7 +309,7 @@ class MinMaxWeightsEstimator():
                                                                                                 target_policy.choice_matrix) +\
                                  target_policy.choice_matrix * np.minimum(self.delta_delta[i], np.ones_like(self.delta_delta[i])).reshape((-1, 1))
 
-            self.delta_J[i] = grad_J1 - (self.source_policies[i].log_gradient_matrix * (self.source_tasks[i].env.Q * self.source_tasks[i].env.zeta_distr).reshape(self.source_tasks[i].env.Q.shape + (1,))).sum(axis=(0, 1))
+            self.delta_J[i] = grad_J1 - (self.source_policies[i].log_gradient_matrix * (self.source_tasks[i].env.Q * self.source_tasks[i].env.zeta_distr).reshape(self.source_tasks[i].env.Q.shape + (1,))).sum(axis=(0, 1))/(1. - self.gamma)
 
             self.source_samples[i]['eta_1'] = target_policy.log_gradient_matrix[self.source_samples[i]['fsi'], self.source_samples[i]['ai']] * target_Q[w_idx[i]:w_idx[i+1]].reshape((-1, 1))
 
@@ -325,8 +325,8 @@ class MinMaxWeightsEstimator():
             bias = (self.delta_J * self.ns.reshape((-1, 1))).sum(axis=0) / n
             vari = 0.
             for j in range(self.m):
-                bias += (self.source_samples[j]['eta_j'] - w[w_idx[j]:w_idx[j+1]].reshape((-1,1))*self.source_samples[j]['eta_1']).sum(axis=0)/n
-                vari += (((w[w_idx[j]:w_idx[j+1]].reshape((-1,1))*self.source_samples[j]['eta_1'])**2).sum(axis=0) - ((w[w_idx[j]:w_idx[j+1]].reshape((-1,1))*self.source_samples[j]['eta_1']).sum(axis=0))**2/self.ns[j])/n**2
+                bias += (self.source_samples[j]['eta_j'] - w[w_idx[j]:w_idx[j+1]].reshape((-1,1))*self.source_samples[j]['eta_1']).sum(axis=0)/(n*(1. - self.gamma))
+                vari += (((w[w_idx[j]:w_idx[j+1]].reshape((-1,1))*self.source_samples[j]['eta_1'])**2).sum(axis=0) - ((w[w_idx[j]:w_idx[j+1]].reshape((-1,1))*self.source_samples[j]['eta_1']).sum(axis=0))**2/self.ns[j])/(n*(1. - self.gamma))**2
             bias = (bias**2).sum()
             vari = vari.sum()
             return bias + vari
@@ -334,10 +334,10 @@ class MinMaxWeightsEstimator():
         def grad_g(w):
             bias = (self.delta_J * self.ns.reshape((-1, 1))).sum(axis=0) / n
             for j in range(self.m):
-                bias += (self.source_samples[j]['eta_j'] - w[w_idx[j]:w_idx[j + 1]].reshape((-1, 1)) * self.source_samples[j]['eta_1']).sum(axis=0) / n
+                bias += (self.source_samples[j]['eta_j'] - w[w_idx[j]:w_idx[j + 1]].reshape((-1, 1)) * self.source_samples[j]['eta_1']).sum(axis=0) / (n*(1. - self.gamma))
             grad = np.zeros(w.shape + (2,), dtype=np.float64)
             for j in range(self.m):
-                grad[w_idx[j]:w_idx[j+1]] = 2*self.source_samples[j]['eta_1']*(-bias + self.source_samples[j]['eta_1']*w[w_idx[j]:w_idx[j+1]].reshape((-1,1)) - (self.source_samples[j]['eta_1']*w[w_idx[j]:w_idx[j+1]].reshape((-1,1))).sum()/self.ns[j])/n**2
+                grad[w_idx[j]:w_idx[j+1]] = 2*self.source_samples[j]['eta_1']*(-bias/(1. - self.gamma) + self.source_samples[j]['eta_1']*w[w_idx[j]:w_idx[j+1]].reshape((-1,1))/(1. - self.gamma)**2 - (self.source_samples[j]['eta_1']*w[w_idx[j]:w_idx[j+1]].reshape((-1,1))).sum()/(self.ns[j]*(1. - self.gamma)**2))/n**2
             grad = grad.sum(axis=1)
             return grad
 
@@ -345,7 +345,7 @@ class MinMaxWeightsEstimator():
             hess = np.zeros([w.shape[0]]*2 + [2], dtype=np.float64)
             for j1 in range(self.m):
                 for j2 in range(self.m):
-                    hess[w_idx[j1]:w_idx[j1+1], w_idx[j2]:w_idx[j2+1]] = -self.source_samples[j1]['eta_1'].dot((1. + (j1 == j2)/self.ns[j1])*self.source_samples[j2]['eta_1'].T)
+                    hess[w_idx[j1]:w_idx[j1+1], w_idx[j2]:w_idx[j2+1]] = (-self.source_samples[j1]['eta_1']/(1. - self.gamma)**2).dot((1. + (j1 == j2)/self.ns[j1])*self.source_samples[j2]['eta_1'].T)
             hess = hess*2/n**2
             return hess
 

@@ -143,7 +143,7 @@ target_policy = pf.create_policy(alpha_1_target, alpha_2_target)
 lstd_q = LSTD_Q_Estimator(7, 7, 2, 0.45, True, gamma, 0., min_pos, max_pos, target_task.env.min_speed, target_task.env.max_speed,
                           min_act, max_act)
 lstd_v = LSTD_V_Estimator(6, 6, 0.2, True, gamma, 0., min_pos, max_pos, target_task.env.min_speed, target_task.env.max_speed)
-grad_est = GradientEstimator(baseline_type=1)
+grad_est = GradientEstimator(gamma=gamma, baseline_type=1)
 weights_est = MinMaxWeightsEstimator(gamma)
 
 '''xs = source_tasks[0].env.state_reps[:,0]
@@ -202,7 +202,7 @@ w4 = learner.calculate_density_ratios_transition(a, source_tasks[2], target_task
 w5 = learner.calculate_density_ratios_policy(a, source_tasks[2], target_task, source_policies[2], target_policy)
 g = target_policy.log_gradient_matrix.copy()
 g = np.transpose(g, axes=(2, 0, 1)) * (target_task.env.Q * target_task.env.zeta_distr)
-g = np.transpose(g, axes=(1, 2, 0)).sum(axis=(0, 1))
+g = np.transpose(g, axes=(1, 2, 0)).sum(axis=(0, 1))/(1. - gamma)
 Qs = lstd_q.fit(a, predict=True, weights=w*w4*w5)
 Vs = lstd_v.fit(a, predict=True, weights=w*w4)
 grad = grad_est.estimate_gradient(a, target_policy, weights=w, Q=Qs, V=Vs)
@@ -220,6 +220,18 @@ for i in [2]:
     np.save('learning_app_IS_mm' + str(i+1), np.array(results))
 
 '''print("All tasks", file=out_stream)
+results = learner.learn(target_task, target_sizes, n_runs, source_tasks, source_policies, n_source_samples, out_stream)
+np.save('learning_app_IS_all', np.array(results))'''
+
+
+'''out_stream = open('IS.log', 'w', buffering=1)
+learner = ISLearner(gamma, pf, lstd_q, lstd_v, grad_est, None, seed)
+for i in range(len(source_tasks)):
+    print("Task:", power_sources[i], file=out_stream)
+    results = learner.learn(target_task, target_sizes, n_runs, [source_tasks[i]], [source_policies[i]], [n_source_samples[i]], out_stream)
+    np.save('learning_app_IS' + str(i+1), np.array(results))
+
+print("All tasks", file=out_stream)
 results = learner.learn(target_task, target_sizes, n_runs, source_tasks, source_policies, n_source_samples, out_stream)
 np.save('learning_app_IS_all', np.array(results))'''
 

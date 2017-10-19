@@ -153,7 +153,7 @@ class ISLearner:
                                                                  Q=Qs, V=Vs, source_weights=weights_zeta)
                 '''g = pol.log_gradient_matrix.copy()
                 g = np.transpose(g, axes=(2, 0, 1)) * (target_task.env.Q * target_task.env.zeta_distr)
-                g = np.transpose(g, axes=(1, 2, 0)).sum(axis=(0, 1))
+                g = np.transpose(g, axes=(1, 2, 0)).sum(axis=(0, 1))/(1. - self.gamma)
                 print(grad, grad_J1, g, alpha1, alpha2)'''
             else:
                 if self.q_estimator is not None and self.v_estimator is not None:

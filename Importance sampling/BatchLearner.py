@@ -118,11 +118,18 @@ class BatchLearner:
                         if source_comps[i] != 0.:
                             samples_idx = np.random.choice(source_samples[i]['fs'].shape[0], p=source_relevance[i]/source_relevance[i].sum(), size=source_sizes[i])
                             for k in selected_samples.keys():
-                                selected_samples[k].append(source_samples[i][k][samples_idx])
+                                selected_samples[k].append(source_samples[i][k][samples_idx]) 
                             phi_source_q_sel.append(phi_source_q[i][samples_idx])
                             phi_ns_source_q_sel.append(phi_ns_source_q[i][samples_idx])
                             phi_source_v_sel.append(phi_source_v[i][samples_idx])
                             phi_ns_source_v_sel.append(phi_ns_source_v[i][samples_idx])
+                    if self.v_estimator is not None and self.q_estimator is not None:
+                        self.q_estimator.source_phi_sa = np.vstack(phi_source_q_sel)
+                        self.q_estimator.source_phi_nsa = np.vstack(phi_ns_source_q_sel)
+                        self.q_estimator.source_rewards = np.hstack(selected_samples['r'])
+                        self.v_estimator.source_phi_s = np.vstack(phi_source_v_sel)
+                        self.v_estimator.source_phi_ns = np.vstack(phi_ns_source_v_sel)
+                        self.v_estimator.source_rewards = np.hstack(selected_samples['r'])
 
                     transfer_samples = {'fs': np.vstack([target_samples['fs']] + selected_samples['fs']),
                                         'a': np.vstack([target_samples['a']] + selected_samples['a']),
@@ -134,16 +141,16 @@ class BatchLearner:
                                         'nsi': np.concatenate([target_samples['nsi']] + selected_samples['nsi']),
                                         'nai': np.concatenate([target_samples['nai']] + selected_samples['nai'])}
                     if self.v_estimator is not None and self.q_estimator is not None:
-                        Qs = self.q_estimator.fit(transfer_samples, predict=True,
-                                                  phi_source=np.vstack(phi_source_q_sel),
-                                                  phi_ns_source=np.vstack(phi_ns_source_q_sel))
-                        Vs = self.v_estimator.fit(transfer_samples, predict=True,
-                                                  phi_source=np.vstack(phi_source_v_sel),
-                                                  phi_ns_source=np.vstack(phi_ns_source_v_sel))
+                        Qs = self.q_estimator.fit(target_samples, predict=True,
+                                                  source_weights=np.ones(source_sizes.sum(), dtype=np.float64))
+                        Vs = self.v_estimator.fit(target_samples, predict=True,
+                                                  source_weights=np.ones(source_sizes.sum(), dtype=np.float64))
                     else:
                         Qs = target_task.env.Q[transfer_samples['fsi'], transfer_samples['ai']]
                         Vs = target_task.env.V[transfer_samples['fsi']]
-                    grad = self.gradient_estimator.estimate_gradient(transfer_samples, pol, Q=Qs, V=Vs)
+                    grad = self.gradient_estimator.estimate_gradient(target_samples,
+                                                                     pol.log_gradient_matrix[transfer_samples['fsi'],transfer_samples['ai']],
+                                                                     Q=Qs, V=Vs)
                 else:
                     if self.v_estimator is not None and self.v_estimator is not None:
                         Qs = self.q_estimator.fit(target_samples, predict=True)
@@ -151,7 +158,9 @@ class BatchLearner:
                     else:
                         Qs = target_task.env.Q[target_samples['fsi'], target_samples['ai']]
                         Vs = target_task.env.V[target_samples['fsi']]
-                    grad = self.gradient_estimator.estimate_gradient(target_samples, pol, Q=Qs, V=Vs)
+                    grad = self.gradient_estimator.estimate_gradient(target_samples,
+                                                                     pol.log_gradient_matrix[target_samples['fsi'],target_samples['ai']],
+                                                                     Q=Qs, V=Vs)
             else:
                 if self.v_estimator is not None and self.v_estimator is not None:
                     Qs = self.q_estimator.fit(target_samples, predict=True)
@@ -159,15 +168,17 @@ class BatchLearner:
                 else:
                     Qs = target_task.env.Q[target_samples['fsi'], target_samples['ai']]
                     Vs = target_task.env.V[target_samples['fsi']]
-                grad = self.gradient_estimator.estimate_gradient(target_samples, pol, Q=Qs, V=Vs)
+                grad = self.gradient_estimator.estimate_gradient(target_samples,
+                                                                 pol.log_gradient_matrix[target_samples['fsi'], target_samples['ai']],
+                                                                 Q=Qs, V=Vs)
             grad *= np.array([(0 < alpha1 < 1) or ((alpha1 < 1 or grad[0] < 0) and (alpha1 > 0 or grad[0] > 0)),
                               (0 < alpha2 < 1) or ((alpha2 < 1 or grad[1] < 0) and (alpha2 > 0 or grad[1] > 0))])
             grad_norm = np.linalg.norm(grad)
+            grad /= np.linalg.norm(grad, ord=np.inf) if grad_norm != 0. else 1.
             iter += 1
             step_size -= (0.01 - 0.001) / max_iters
         if iter > max_iters:
-            self.out_logger.write("Did not converge")
-            self.out_logger.write(grad_norm, iter)
+            print("Did not converge;", grad_norm, iter, file=self.out_stream)
         return alpha1, alpha2
 
 
