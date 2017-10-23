@@ -33,6 +33,12 @@ class ISLearner:
                 print("No transfer", file=self.out_stream)
 
         results = np.zeros((n_runs, len(n_target_samples)), dtype=np.float64)
+        if source_tasks is not None:
+            idx_grid = np.dstack(np.meshgrid(np.arange(source_tasks[0].env.state_reps.shape[0]),
+                                             np.arange(source_tasks[0].env.action_reps.shape[0]),
+                                             indexing='ij')).reshape(-1, 2)
+            all_phi_Q = self.q_estimator.map_to_feature_space(source_tasks[0].env.state_reps[idx_grid[:, 0]],
+                                                              source_tasks[0].env.action_reps[idx_grid[:, 1]])
         for run_idx in range(n_runs):
             print("Run:", run_idx+1, file=self.out_stream)
             np.random.seed(self.seed)
@@ -61,7 +67,7 @@ class ISLearner:
                     self.q_estimator.add_sources(source_samples)
                     self.v_estimator.add_sources(source_samples)
                 if self.weights_estimator is not None:
-                    self.weights_estimator.add_sources(source_samples, source_tasks, source_policies)
+                    self.weights_estimator.add_sources(source_samples, source_tasks, source_policies)#, all_phi_Q)
 
             for size_idx, target_size in enumerate(n_target_samples):
                 print("No. samples:", target_size, file=self.out_stream)
@@ -96,6 +102,9 @@ class ISLearner:
         alpha1 = np.random.uniform()
         alpha2 = np.random.uniform()
         print("Starting point:", [alpha1, alpha2], file=self.out_stream)
+        n_uses = 0
+        cum_fun_val = 0.
+        fun_vals = np.zeros(max_iters, dtype=np.float64)
 
         while grad_norm > 1e-3 and iter <= max_iters:
             alpha1 += step_size * grad[0]
@@ -147,9 +156,22 @@ class ISLearner:
                     grad_J1 = self.gradient_estimator.estimate_gradient(target_samples,
                                                                         pol.log_gradient_matrix[target_samples['fsi'], target_samples['ai']],
                                                                         Q=Qs[:target_size], V=Vs[:target_size])
-                    weights_zeta = self.weights_estimator.estimate_weights(pol, target_task.env.power, target_size,
-                                                                           Qs[target_size:], grad_J1)
-                grad = self.gradient_estimator.estimate_gradient(target_samples, pol.log_gradient_matrix[transfer_samples['fsi'], transfer_samples['ai']],
+                    #weights_zeta = self.weights_estimator.estimate_weights(pol, target_task.env.power, target_size,
+                    #                                                       self.q_estimator, Vs[target_size:])
+                    weights_zeta, use = self.weights_estimator.estimate_weights(target_samples, pol, target_task.env.power,
+                                                                           target_size, Qs, Vs, grad_J1)
+                    #print(use)
+                    #cum_fun_val = 0.9*cum_fun_val + fun_val
+                    #fun_vals[iter-1] = fun_val
+                    if use:
+                        grad = self.gradient_estimator.estimate_gradient(target_samples, pol.log_gradient_matrix[transfer_samples['fsi'], transfer_samples['ai']],
+                                                                         Q=Qs, V=Vs, source_weights=weights_zeta)
+                        n_uses += 1
+                    else:
+                        grad = self.gradient_estimator.estimate_gradient(target_samples, pol.log_gradient_matrix[target_samples['fsi'], target_samples['ai']],
+                                                                         Q=Qs[:target_size], V=Vs[:target_size])
+                else:
+                    grad = self.gradient_estimator.estimate_gradient(target_samples, pol.log_gradient_matrix[transfer_samples['fsi'], transfer_samples['ai']],
                                                                  Q=Qs, V=Vs, source_weights=weights_zeta)
                 '''g = pol.log_gradient_matrix.copy()
                 g = np.transpose(g, axes=(2, 0, 1)) * (target_task.env.Q * target_task.env.zeta_distr)
@@ -171,6 +193,8 @@ class ISLearner:
             grad /= np.linalg.norm(grad, ord=np.inf) if grad_norm != 0. else 1.
             iter += 1
             step_size -= (0.01 - 0.001) / max_iters
+        print(n_uses, iter, file=self.out_stream)
+        #np.save('fun_vals_1_'+str(target_size), fun_vals)
         if iter > max_iters:
             print("Did not converge;",grad_norm,iter, file=self.out_stream)
         return alpha1, alpha2
