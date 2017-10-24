@@ -5,13 +5,19 @@ import time
 
 
 class ISLearner:
-    def __init__(self, gamma, policy_factory, q_estimator, v_estimator, gradient_estimator, weights_estimator, seed):
+    def __init__(self, gamma, policy_factory, q_estimator, v_estimator, gradient_estimator, weights_estimator,
+                 app_w_critic_Q, app_w_critic_V, app_w_actor, seed):
         self.gamma = gamma
         self.policy_factory = policy_factory
         self.q_estimator = q_estimator
         self.v_estimator = v_estimator
         self.gradient_estimator = gradient_estimator
         self.weights_estimator = weights_estimator
+        self.app_w_critic_Q = app_w_critic_Q
+        self.app_w_critic_V = app_w_critic_V
+        self.app_w_actor = app_w_actor
+        if self.weights_estimator is not None:
+            self.weights_estimator.set_flags(app_w_actor, app_w_critic_Q, app_w_critic_V)
         self.initial_seed = seed
         self.seed = seed
 
@@ -33,12 +39,20 @@ class ISLearner:
                 print("No transfer", file=self.out_stream)
 
         results = np.zeros((n_runs, len(n_target_samples)), dtype=np.float64)
+        all_phi_Q = None
+        all_phi_V = None
+
         if source_tasks is not None:
-            idx_grid = np.dstack(np.meshgrid(np.arange(source_tasks[0].env.state_reps.shape[0]),
-                                             np.arange(source_tasks[0].env.action_reps.shape[0]),
-                                             indexing='ij')).reshape(-1, 2)
-            all_phi_Q = self.q_estimator.map_to_feature_space(source_tasks[0].env.state_reps[idx_grid[:, 0]],
-                                                              source_tasks[0].env.action_reps[idx_grid[:, 1]])
+            if self.app_w_critic_Q or self.app_w_actor:
+                idx_grid = np.dstack(np.meshgrid(np.arange(source_tasks[0].env.state_reps.shape[0]),
+                                                 np.arange(source_tasks[0].env.action_reps.shape[0]),
+                                                 indexing='ij')).reshape(-1, 2)
+                all_phi_Q = self.q_estimator.map_to_feature_space(source_tasks[0].env.state_reps[idx_grid[:, 0]],
+                                                                  source_tasks[0].env.action_reps[idx_grid[:, 1]])
+                del idx_grid
+            if self.app_w_critic_V:
+                all_phi_V = self.v_estimator.map_to_feature_space(source_tasks[0].env.state_reps)
+
         for run_idx in range(n_runs):
             print("Run:", run_idx+1, file=self.out_stream)
             np.random.seed(self.seed)
@@ -67,14 +81,15 @@ class ISLearner:
                     self.q_estimator.add_sources(source_samples)
                     self.v_estimator.add_sources(source_samples)
                 if self.weights_estimator is not None:
-                    self.weights_estimator.add_sources(source_samples, source_tasks, source_policies)#, all_phi_Q)
+                    self.weights_estimator.add_sources(source_samples, source_tasks, source_policies, all_phi_Q, all_phi_V)
 
             for size_idx, target_size in enumerate(n_target_samples):
                 print("No. samples:", target_size, file=self.out_stream)
                 alpha_1_target_opt, alpha_2_target_opt =\
                     self.optimize_policy_parameters(target_size, target_task,
                                                     source_samples, source_tasks, source_policies,
-                                                    source_samples_probs_zeta, source_samples_probs_p, source_samples_probs_pi)
+                                                    source_samples_probs_zeta, source_samples_probs_p, source_samples_probs_pi,
+                                                    all_phi_Q)
                 optimal_pi = self.policy_factory.create_policy(alpha_1_target_opt, alpha_2_target_opt)
                 target_task.env.set_policy(optimal_pi, self.gamma)
                 J1_opt = target_task.env.J
@@ -92,7 +107,8 @@ class ISLearner:
 
 
     def optimize_policy_parameters(self, target_size, target_task, source_samples=None, source_tasks=None, source_policies=None,
-                                   source_sample_probs_zeta=None, source_sample_probs_p=None, source_sample_probs_pi=None):
+                                   source_sample_probs_zeta=None, source_sample_probs_p=None, source_sample_probs_pi=None,
+                                   all_phi_Q=None):
         step_size = 0.01
         max_iters = 2000
         iter = 1
@@ -114,52 +130,71 @@ class ISLearner:
             pol = self.policy_factory.create_policy(alpha1, alpha2)
             target_samples = self.collect_samples(target_task, target_size, pol)
             if source_samples is not None:
-                weights_zeta = []
-                if self.v_estimator is not None and self.q_estimator is not None:
-                    weights_p = []
-                    weights_pi = []
-                for i in range(len(source_samples)):
-                    weights_zeta.append(self.calculate_density_ratios_zeta(source_samples[i], source_tasks[i], target_task,
-                                                                             source_policies[i], pol,
-                                                                             source_sample_probs_zeta[i]))
-                    if self.v_estimator is not None and self.q_estimator is not None:
-                        weights_p.append(self.calculate_density_ratios_transition(source_samples[i], source_tasks[i], target_task,
-                                                                                  source_policies[i], pol,
-                                                                                  source_sample_probs_p[i]))
-                        weights_pi.append(self.calculate_density_ratios_policy(source_samples[i], source_tasks[i], target_task,
-                                                                               source_policies[i], pol,
-                                                                               source_sample_probs_pi[i]))
-
-                weights_zeta = np.concatenate(weights_zeta)
-                if self.v_estimator is not None and self.q_estimator is not None:
-                    weights_p = np.concatenate(weights_p)
-                    weights_pi = np.concatenate(weights_pi)
-
                 transfer_samples = {'fs': np.vstack([target_samples['fs']] + [ss['fs'] for ss in source_samples]),
-                                  'a': np.vstack([target_samples['a']] + [ss['a'] for ss in source_samples]),
-                                  'ns': np.vstack([target_samples['ns']] + [ss['ns'] for ss in source_samples]),
-                                  'na': np.vstack([target_samples['na']] + [ss['na'] for ss in source_samples]),
-                                  'r': np.concatenate([target_samples['r']] + [ss['r'] for ss in source_samples]),
-                                  'fsi': np.concatenate([target_samples['fsi']] + [ss['fsi'] for ss in source_samples]),
-                                  'ai': np.concatenate([target_samples['ai']] + [ss['ai'] for ss in source_samples]),
-                                  'nsi': np.concatenate([target_samples['nsi']] + [ss['nsi'] for ss in source_samples]),
-                                  'nai': np.concatenate([target_samples['nai']] + [ss['nai'] for ss in source_samples])}
+                                    'a': np.vstack([target_samples['a']] + [ss['a'] for ss in source_samples]),
+                                    'ns': np.vstack([target_samples['ns']] + [ss['ns'] for ss in source_samples]),
+                                    'na': np.vstack([target_samples['na']] + [ss['na'] for ss in source_samples]),
+                                    'r': np.concatenate([target_samples['r']] + [ss['r'] for ss in source_samples]),
+                                    'fsi': np.concatenate([target_samples['fsi']] + [ss['fsi'] for ss in source_samples]),
+                                    'ai': np.concatenate([target_samples['ai']] + [ss['ai'] for ss in source_samples]),
+                                    'nsi': np.concatenate([target_samples['nsi']] + [ss['nsi'] for ss in source_samples]),
+                                    'nai': np.concatenate([target_samples['nai']] + [ss['nai'] for ss in source_samples])}
+                # Critic
                 if self.v_estimator is not None and self.q_estimator is not None:
-                    Qs = self.q_estimator.fit(target_samples, predict=True,
-                                              source_weights=weights_zeta * weights_p * weights_pi)
-                    Vs = self.v_estimator.fit(target_samples, predict=True,
-                                              source_weights=weights_zeta * weights_p)
+                    if not self.app_w_critic_V or not self.app_w_critic_Q:
+                        weights_zeta = []
+                        weights_p = []
+                        if not self.app_w_critic_Q:
+                            weights_pi = []
+                        for i in range(len(source_samples)):
+                            weights_zeta.append(self.calculate_density_ratios_zeta(source_samples[i], source_tasks[i],
+                                                                                   target_task, source_policies[i], pol,
+                                                                                   source_sample_probs_zeta[i]))
+                            weights_p.append(self.calculate_density_ratios_transition(source_samples[i], source_tasks[i],
+                                                                                      target_task, source_policies[i], pol,
+                                                                                      source_sample_probs_p[i]))
+                            if not self.app_w_critic_Q:
+                                weights_pi.append(self.calculate_density_ratios_policy(source_samples[i], source_tasks[i], target_task,
+                                                                                       source_policies[i], pol,
+                                                                                       source_sample_probs_pi[i]))
+
+                        weights_zeta = np.concatenate(weights_zeta)
+                        weights_p = np.concatenate(weights_p)
+                        if not self.app_w_critic_Q:
+                            weights_pi = np.concatenate(weights_pi)
+                    if self.weights_estimator is not None and (self.app_w_critic_Q or self.app_w_critic_V):
+                        self.weights_estimator.prepare_lstd(pol, target_task.env.power)
+                    if self.app_w_critic_Q:
+                        weights_q = self.weights_estimator.estimate_weights_lstdq(target_size)
+                    else:
+                        weights_q = weights_zeta*weights_p*weights_pi
+                    if self.app_w_critic_V:
+                        weights_v = self.weights_estimator.estimate_weights_lstdv(target_size)
+                    else:
+                        weights_v = weights_zeta*weights_p
+
+                    Qs = self.q_estimator.fit(target_samples, predict=True, source_weights=weights_q)
+                    Vs = self.v_estimator.fit(target_samples, predict=True, source_weights=weights_v)
                 else:
                     Qs = target_task.env.Q[transfer_samples['fsi'], transfer_samples['ai']]
                     Vs = target_task.env.V[transfer_samples['fsi']]
-                if self.weights_estimator is not None:
+                # Actor
+                if self.app_w_actor:
+                    if self.q_estimator is not None:
+                        all_target_Q = self.q_estimator.predict(None, None, all_phi_Q).reshape(source_tasks[0].env.Q.shape)
+                    else:
+                        all_target_Q = target_task.env.Q
+                    self.weights_estimator.prepare_gradient(pol, target_task.env.power, all_target_Q, Vs[target_size:])
+
+                    '''weights_zeta = self.weights_estimator.estimate_weights_gradient(target_size)
+                    grad = self.gradient_estimator.estimate_gradient(target_samples, pol.log_gradient_matrix[transfer_samples['fsi'],
+                                                                                                             transfer_samples['ai']],
+                                                                     Q=Qs, V=Vs, source_weights=weights_zeta)'''
                     grad_J1 = self.gradient_estimator.estimate_gradient(target_samples,
                                                                         pol.log_gradient_matrix[target_samples['fsi'], target_samples['ai']],
                                                                         Q=Qs[:target_size], V=Vs[:target_size])
-                    #weights_zeta = self.weights_estimator.estimate_weights(pol, target_task.env.power, target_size,
-                    #                                                       self.q_estimator, Vs[target_size:])
-                    weights_zeta, use = self.weights_estimator.estimate_weights(target_samples, pol, target_task.env.power,
-                                                                           target_size, Qs, Vs, grad_J1)
+                    weights_zeta, use = self.weights_estimator.estimate_weights(target_samples, pol, target_size, Qs[:target_size],
+                                                                                Vs[:target_size], grad_J1)
                     #print(use)
                     #cum_fun_val = 0.9*cum_fun_val + fun_val
                     #fun_vals[iter-1] = fun_val
@@ -171,12 +206,20 @@ class ISLearner:
                         grad = self.gradient_estimator.estimate_gradient(target_samples, pol.log_gradient_matrix[target_samples['fsi'], target_samples['ai']],
                                                                          Q=Qs[:target_size], V=Vs[:target_size])
                 else:
-                    grad = self.gradient_estimator.estimate_gradient(target_samples, pol.log_gradient_matrix[transfer_samples['fsi'], transfer_samples['ai']],
-                                                                 Q=Qs, V=Vs, source_weights=weights_zeta)
+                    if weights_zeta is None:
+                        weights_zeta = []
+                        for i in range(len(source_samples)):
+                            weights_zeta.append(self.calculate_density_ratios_zeta(source_samples[i], source_tasks[i],
+                                                                                   target_task, source_policies[i], pol,
+                                                                                   source_sample_probs_zeta[i]))
+                        weights_zeta = np.concatenate(weights_zeta)
+                    grad = self.gradient_estimator.estimate_gradient(target_samples, pol.log_gradient_matrix[transfer_samples['fsi'],
+                                                                                                             transfer_samples['ai']],
+                                                                     Q=Qs, V=Vs, source_weights=weights_zeta)
                 '''g = pol.log_gradient_matrix.copy()
                 g = np.transpose(g, axes=(2, 0, 1)) * (target_task.env.Q * target_task.env.zeta_distr)
                 g = np.transpose(g, axes=(1, 2, 0)).sum(axis=(0, 1))/(1. - self.gamma)
-                print(grad, grad_J1, g, alpha1, alpha2)'''
+                print(grad, grad_J1, g,alpha1, alpha2)'''
             else:
                 if self.q_estimator is not None and self.v_estimator is not None:
                     Qs = self.q_estimator.fit(target_samples, predict=True)
@@ -184,16 +227,17 @@ class ISLearner:
                 else:
                     Qs = target_task.env.Q[target_samples['fsi'], target_samples['ai']]
                     Vs = target_task.env.V[target_samples['fsi']]
-                grad = self.gradient_estimator.estimate_gradient(target_samples, pol.log_gradient_matrix[target_samples['fsi'], target_samples['ai']],
+                grad = self.gradient_estimator.estimate_gradient(target_samples, pol.log_gradient_matrix[target_samples['fsi'],
+                                                                                                         target_samples['ai']],
                                                                  Q=Qs, V=Vs)
             grad *= np.array([(0 < alpha1 < 1) or ((alpha1 < 1 or grad[0] < 0) and (alpha1 > 0 or grad[0] > 0)),
                               (0 < alpha2 < 1) or ((alpha2 < 1 or grad[1] < 0) and (alpha2 > 0 or grad[1] > 0))])
             grad_norm = np.linalg.norm(grad)
-            #grad = np.clip(grad, -1., 1.)
             grad /= np.linalg.norm(grad, ord=np.inf) if grad_norm != 0. else 1.
             iter += 1
             step_size -= (0.01 - 0.001) / max_iters
-        print(n_uses, iter, file=self.out_stream)
+            weights_zeta = None
+        #print(n_uses, iter, file=self.out_stream)
         #np.save('fun_vals_1_'+str(target_size), fun_vals)
         if iter > max_iters:
             print("Did not converge;",grad_norm,iter, file=self.out_stream)

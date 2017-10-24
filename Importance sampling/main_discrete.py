@@ -10,7 +10,7 @@ from PolicyFactoryMC import PolicyFactoryMC, PolicyMC
 from LSTD_Q_Estimator import LSTD_Q_Estimator
 from LSTD_V_Estimator import LSTD_V_Estimator
 from GradientEstimator import GradientEstimator
-from MinMaxEstimator import MinMaxWeightsEstimator
+from MinMaxWeightsEstimator import MinMaxWeightsEstimator
 from MinEstimator import MinWeightsEstimator
 from ISLearner import ISLearner
 from BatchLearner import BatchLearner
@@ -212,15 +212,15 @@ print(grad, g)'''
 
 
 target_sizes = list(range(1000, 10000, 1000)) + list(range(10000, 50000 + 1, 10000))
-target_sizes = list(range(50000, 50000 + 1, 10000))
+target_sizes = list(range(20000, 50000 + 1, 10000))
 n_runs = 10
 '''for _ in range(1):
     np.random.seed(seed)
     seed = int(np.random.uniform(high=2**32))'''
 
 weights_est = MinWeightsEstimator(gamma)
-out_stream = open('IS_m.log', 'w', buffering=1)
-learner = ISLearner(gamma, pf, lstd_q, lstd_v, grad_est, weights_est, seed)
+out_stream = open('IS_m.log', 'a', buffering=1)
+learner = ISLearner(gamma, pf, lstd_q, lstd_v, grad_est, weights_est, False, False, True, seed)
 for i in [2]:
     print("Task:", power_sources[i], file=out_stream)
     results = learner.learn(target_task, target_sizes, n_runs, [source_tasks[i]], [source_policies[i]], [n_source_samples[i]], out_stream)
