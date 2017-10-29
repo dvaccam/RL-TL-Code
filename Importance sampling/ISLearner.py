@@ -119,8 +119,6 @@ class ISLearner:
         alpha2 = np.random.uniform()
         print("Starting point:", [alpha1, alpha2], file=self.out_stream)
         n_uses = 0
-        cum_fun_val = 0.
-        fun_vals = np.zeros(max_iters, dtype=np.float64)
 
         while grad_norm > 1e-3 and iter <= max_iters:
             alpha1 += step_size * grad[0]
@@ -195,9 +193,7 @@ class ISLearner:
                                                                         Q=Qs[:target_size], V=Vs[:target_size])
                     weights_zeta, use = self.weights_estimator.estimate_weights(target_samples, pol, target_size, Qs[:target_size],
                                                                                 Vs[:target_size], grad_J1)
-                    #print(use)
-                    #cum_fun_val = 0.9*cum_fun_val + fun_val
-                    #fun_vals[iter-1] = fun_val
+                    use = True
                     if use:
                         grad = self.gradient_estimator.estimate_gradient(target_samples, pol.log_gradient_matrix[transfer_samples['fsi'], transfer_samples['ai']],
                                                                          Q=Qs, V=Vs, source_weights=weights_zeta)
@@ -219,7 +215,7 @@ class ISLearner:
                 '''g = pol.log_gradient_matrix.copy()
                 g = np.transpose(g, axes=(2, 0, 1)) * (target_task.env.Q * target_task.env.zeta_distr)
                 g = np.transpose(g, axes=(1, 2, 0)).sum(axis=(0, 1))/(1. - self.gamma)
-                print(grad, grad_J1, g,alpha1, alpha2)'''
+                print(grad, g,alpha1, alpha2)'''
             else:
                 if self.q_estimator is not None and self.v_estimator is not None:
                     Qs = self.q_estimator.fit(target_samples, predict=True)
@@ -237,8 +233,7 @@ class ISLearner:
             iter += 1
             step_size -= (0.01 - 0.001) / max_iters
             weights_zeta = None
-        #print(n_uses, iter, file=self.out_stream)
-        #np.save('fun_vals_1_'+str(target_size), fun_vals)
+        print(n_uses, iter, file=self.out_stream)
         if iter > max_iters:
             print("Did not converge;",grad_norm,iter, file=self.out_stream)
         return alpha1, alpha2

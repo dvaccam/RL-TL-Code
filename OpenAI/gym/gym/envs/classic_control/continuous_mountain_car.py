@@ -392,9 +392,9 @@ class Continuous_MountainCarEnv(gym.Env):
 
         idx_cube = np.dstack(np.meshgrid(np.arange(idx_grid.shape[0]), np.arange(self.state_reps.shape[0]), indexing='ij')).reshape(-1, 2)
         idx_cube = np.hstack((idx_grid[idx_cube[:,0]], idx_cube[:,1].reshape(-1,1)))
-        r = self.reward_model(self.state_reps[idx_cube[:,0]], self.action_reps[idx_cube[:,1]].reshape((-1,1)), self.state_reps[idx_cube[:,2]]).reshape(self.transition_matrix.shape)
-        self.R = (r * self.transition_matrix).sum(axis=2)
-        del r, idx_grid, idx_cube
+        self.r = self.reward_model(self.state_reps[idx_cube[:,0]], self.action_reps[idx_cube[:,1]].reshape((-1,1)), self.state_reps[idx_cube[:,2]]).reshape(self.transition_matrix.shape)
+        self.R = (self.r * self.transition_matrix).sum(axis=2)
+        del idx_grid, idx_cube
 
         self.initial_state_distr = np.zeros(self.state_reps.shape[0], dtype=np.float64)
         initial_bins_idx = np.argwhere(np.logical_and(self.min_initial_state <= self.position_bins, self.position_bins  <= self.max_initial_state)).ravel()

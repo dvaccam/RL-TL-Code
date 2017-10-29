@@ -142,7 +142,7 @@ source_policies = [pf.create_policy(alpha_1_sources[i], alpha_2_sources[i]) for 
 # Defining target policy
 target_policy = pf.create_policy(alpha_1_target, alpha_2_target)
 
-lstd_q = LSTD_Q_Estimator(7, 7, 2, 0.45, True, gamma, 0., min_pos, max_pos, target_task.env.min_speed, target_task.env.max_speed,
+lstd_q = LSTD_Q_Estimator(4, 4, 2, 0.4, True, gamma, 0., min_pos, max_pos, target_task.env.min_speed, target_task.env.max_speed,
                           min_act, max_act)
 lstd_v = LSTD_V_Estimator(6, 6, 0.2, True, gamma, 0., min_pos, max_pos, target_task.env.min_speed, target_task.env.max_speed)
 grad_est = GradientEstimator(gamma=gamma, baseline_type=1)
@@ -212,28 +212,27 @@ print(grad, g)'''
 
 
 target_sizes = list(range(1000, 10000, 1000)) + list(range(10000, 50000 + 1, 10000))
-target_sizes = list(range(20000, 50000 + 1, 10000))
 n_runs = 10
 '''for _ in range(1):
     np.random.seed(seed)
     seed = int(np.random.uniform(high=2**32))'''
 
 weights_est = MinWeightsEstimator(gamma)
-out_stream = open('IS_m.log', 'a', buffering=1)
+out_stream = open('IS_m.log', 'w', buffering=1)
 learner = ISLearner(gamma, pf, lstd_q, lstd_v, grad_est, weights_est, False, False, True, seed)
 for i in [2]:
     print("Task:", power_sources[i], file=out_stream)
     results = learner.learn(target_task, target_sizes, n_runs, [source_tasks[i]], [source_policies[i]], [n_source_samples[i]], out_stream)
-    #np.save('learning_app_IS_m' + str(i+1), np.array(results))
+    np.save('learning_app_IS_m' + str(i+1), np.array(results))
 
 '''print("All tasks", file=out_stream)
 results = learner.learn(target_task, target_sizes, n_runs, source_tasks, source_policies, n_source_samples, out_stream)
 np.save('learning_app_IS_all', np.array(results))'''
 
 
-'''out_stream = open('IS.log', 'w', buffering=1)
-learner = ISLearner(gamma, pf, lstd_q, lstd_v, grad_est, None, seed)
-for i in range(len(source_tasks)):
+'''out_stream = sys.stdout#open('IS.log', 'w', buffering=1)
+learner = ISLearner(gamma, pf, lstd_q, lstd_v, grad_est, None, False, False, False, seed)
+for i in [2,1,0]:
     print("Task:", power_sources[i], file=out_stream)
     results = learner.learn(target_task, target_sizes, n_runs, [source_tasks[i]], [source_policies[i]], [n_source_samples[i]], out_stream)
     np.save('learning_app_IS' + str(i+1), np.array(results))
@@ -244,7 +243,7 @@ np.save('learning_app_IS_all', np.array(results))'''
 
 
 '''out_stream = open('Learning.log', 'w', buffering=1)
-learner = ISLearner(gamma, pf, lstd_q, lstd_v, grad_est, None, seed)
+learner = ISLearner(gamma, pf, lstd_q, lstd_v, grad_est, None, False, False, False, seed)
 print("No tasks", file=out_stream)
 results = learner.learn(target_task, target_sizes, n_runs, None, None, None, out_stream)
 np.save('learning', np.array(results))'''

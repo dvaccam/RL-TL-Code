@@ -1,8 +1,9 @@
 import numpy as np
 import math
-from scipy.optimize import minimize, fixed_point, root
-from scipy.special import erf
-from scipy.stats import ncx2, norm, moment
+from scipy.optimize import minimize, fixed_point, root, brentq
+from scipy.special import erf, iv
+from scipy.special import gamma as gam_fun
+from scipy.stats import ncx2, norm, moment, chi2
 import gym
 import subprocess
 
@@ -44,6 +45,7 @@ class MinWeightsEstimator():
         self.delta_delta = np.zeros((self.m, source_tasks[0].env.V.shape[0]), dtype=np.float64)
         self.delta_J = np.zeros((self.m, 2), dtype=np.float64)
         self.source_sizes = np.zeros(self.m, dtype=np.int64)
+        self.reduced_source_sizes = np.zeros(self.m, dtype=np.int64)
 
         for j in range(self.m):
             for s in range(source_tasks[0].env.transition_matrix.shape[0]):
@@ -358,13 +360,28 @@ class MinWeightsEstimator():
 
             self.source_sizes[j] = self.source_samples[j]['fs'].shape[0]
 
-            self.source_samples[j]['eta_j'] = \
-                source_policies[j].log_gradient_matrix[source_samples[j]['fsi'], source_samples[j]['ai']] * \
-                (source_tasks[j].env.Q[source_samples[j]['fsi'], source_samples[j]['ai']] -
-                 source_tasks[j].env.V[source_samples[j]['fsi']]).reshape((-1, 1))
+            state_idx = source_samples[j]['fsi']
+            action_idx = source_samples[j]['ai']
+            sorted_idx = np.lexsort((action_idx, state_idx))
+            state_sorted = state_idx[sorted_idx]
+            action_sorted = action_idx[sorted_idx]
+            state_groups = np.ones(state_idx.shape[0], dtype=bool)
+            action_groups = np.ones(state_idx.shape[0], dtype=bool)
+            state_groups[1:] = state_sorted[1:] != state_sorted[:-1]
+            action_groups[1:] = action_sorted[1:] != action_sorted[:-1]
+            groups = np.logical_or(state_groups, action_groups)
+            groups = np.arange(groups.shape[0])[groups]
+            self.source_samples[j]['idx_s'] = sorted_idx
+            self.source_samples[j]['grps'] = groups
+            self.source_samples[j]['grp_szs'] = np.diff(np.append(groups, self.source_sizes[j]))
+            self.reduced_source_sizes[j] = groups.size
 
-        self.l_bounds_grad = np.zeros(self.source_sizes.sum(), dtype=np.float64)
-        self.u_bounds_grad = np.zeros(self.source_sizes.sum(), dtype=np.float64)
+            self.source_samples[j]['eta_j'] = \
+                np.add.reduceat(source_policies[j].log_gradient_matrix[state_sorted, action_sorted] * \
+                                (source_tasks[j].env.Q[state_sorted, action_sorted] - source_tasks[j].env.V[state_sorted])[:, None], groups, axis=0)
+
+        self.l_bounds_grad = np.zeros(self.reduced_source_sizes.sum(), dtype=np.float64)
+        self.u_bounds_grad = np.zeros(self.reduced_source_sizes.sum(), dtype=np.float64)
 
 
 
@@ -378,6 +395,7 @@ class MinWeightsEstimator():
 
     def prepare_gradient(self, target_policy, target_power, all_target_Q, target_V):
         w_idx = np.hstack((0., self.source_sizes)).cumsum().astype(np.int64)
+        reduced_w_idx = np.hstack((0., self.reduced_source_sizes)).cumsum().astype(np.int64)
         for i in range(self.m):
             self.delta_P_eps_theta_s_s_prime[i] = \
                 (self.source_tasks[i].env.transition_matrix * np.abs(self.source_policies[i].choice_matrix - target_policy.choice_matrix)[:, :, None] +
@@ -391,22 +409,23 @@ class MinWeightsEstimator():
                 self.source_tasks[i].env.delta_distr[:, None] * np.abs(self.source_policies[i].choice_matrix - target_policy.choice_matrix) + \
                 target_policy.choice_matrix * np.minimum(self.delta_delta[i], np.ones_like(self.delta_delta[i]))[:, None]
 
-            self.source_samples[i]['eta_1'] =\
-                target_policy.log_gradient_matrix[self.source_samples[i]['fsi'], self.source_samples[i]['ai']] *\
-                (all_target_Q[self.source_samples[i]['fsi'], self.source_samples[i]['ai']] -
-                 target_V[w_idx[i]:w_idx[i + 1]])[:,None]
+            self.source_samples[i]['eta_1'] = \
+                np.add.reduceat((target_policy.log_gradient_matrix[self.source_samples[i]['fsi'], self.source_samples[i]['ai']] *
+                                 (all_target_Q[self.source_samples[i]['fsi'], self.source_samples[i]['ai']] -
+                                  target_V[w_idx[i]:w_idx[i + 1]])[:, None])[self.source_samples[i]['idx_s']], self.source_samples[i]['grps'],
+                                axis=0)
 
-            self.l_bounds_grad[w_idx[i]:w_idx[i + 1]] = np.maximum(np.zeros(self.source_sizes[i], dtype=np.float64),
-                                                                   np.ones(self.source_sizes[i], dtype=np.float64) -
-                                                                   np.minimum(np.ones_like(self.delta_zeta[i]),self.delta_zeta[i])[self.source_samples[i]['fsi'],
-                                                                                                                                   self.source_samples[i]['ai']] /
-                                                                   self.source_tasks[i].env.zeta_distr[self.source_samples[i]['fsi'],
-                                                                                                       self.source_samples[i]['ai']])
-            self.u_bounds_grad[w_idx[i]:w_idx[i + 1]] = np.ones(self.source_sizes[i], dtype=np.float64) +\
-                                                        np.minimum(np.ones_like(self.delta_zeta[i]),
-                                                                   self.delta_zeta[i])[self.source_samples[i]['fsi'], self.source_samples[i]['ai']] /\
-                                                        self.source_tasks[i].env.zeta_distr[self.source_samples[i]['fsi'],
-                                                                                            self.source_samples[i]['ai']]
+            self.l_bounds_grad[reduced_w_idx[i]:reduced_w_idx[i + 1]] = np.clip(np.ones(self.reduced_source_sizes[i], dtype=np.float64) -
+                                                                                np.clip(self.delta_zeta[i], 0., 1.)[self.source_samples[i]['fsi'],
+                                                                                                                    self.source_samples[i]['ai']][self.source_samples[i]['idx_s']][self.source_samples[i]['grps']] /
+                                                                                self.source_tasks[i].env.zeta_distr[self.source_samples[i]['fsi'],
+                                                                                                                    self.source_samples[i]['ai']][self.source_samples[i]['idx_s']][self.source_samples[i]['grps']],
+                                                                                0., 1.)
+            self.u_bounds_grad[reduced_w_idx[i]:reduced_w_idx[i + 1]] = np.ones(self.reduced_source_sizes[i], dtype=np.float64) + \
+                                                                        np.clip(self.delta_zeta[i], 0., 1.)[self.source_samples[i]['fsi'],
+                                                                                                            self.source_samples[i]['ai']][self.source_samples[i]['idx_s']][self.source_samples[i]['grps']] / \
+                                                                        self.source_tasks[i].env.zeta_distr[self.source_samples[i]['fsi'],
+                                                                                                            self.source_samples[i]['ai']][self.source_samples[i]['idx_s']][self.source_samples[i]['grps']]
 
 
 
@@ -415,18 +434,19 @@ class MinWeightsEstimator():
         var_eta_1 = np.var((target_Q-target_V)[:,None]*
                            target_policy.log_gradient_matrix[target_samples['fsi'], target_samples['ai']],
                            axis=0)
-        w_idx = np.hstack((0., self.source_sizes)).cumsum().astype(np.int64)
+        reduced_w_idx = np.hstack((0., self.reduced_source_sizes)).cumsum().astype(np.int64)
         n = self.source_sizes.sum() + target_size
-        w0 = np.ones(n - target_size, dtype=np.float64)
+        w0 = np.ones(self.reduced_source_sizes.sum(), dtype=np.float64)
 
         def g(w):
             bias = 0.
             vari = 0.
             for j in range(self.m):
                 bias += self.source_sizes[j] * (target_grad -
-                                                (w[w_idx[j]:w_idx[j + 1]].reshape((-1, 1)) *self.source_samples[j]['eta_1']).mean(axis=0) /
-                                                (1. - self.gamma)) / n
-                vari += self.source_sizes[j] * np.var(w[w_idx[j]:w_idx[j + 1]].reshape((-1, 1)) * self.source_samples[j]['eta_1'], axis=0) / (n * (1. - self.gamma)) ** 2
+                                                (w[reduced_w_idx[j]:reduced_w_idx[j + 1]][:,None] * self.source_samples[j]['eta_1']).sum(axis=0) /
+                                                (self.source_sizes[j] * (1. - self.gamma))) / n
+                vari += ((((w[reduced_w_idx[j]:reduced_w_idx[j + 1]][:, None] * self.source_samples[j]['eta_1']) ** 2) / self.source_samples[j]['grp_szs'][:,None]).sum(axis=0) -
+                         ((w[reduced_w_idx[j]:reduced_w_idx[j + 1]][:, None] * self.source_samples[j]['eta_1']).sum(axis=0)) ** 2 / self.source_sizes[j]) / (n * (1. - self.gamma)) ** 2
             bias = (bias ** 2).sum()
             vari += (1./n**2 - 1./target_size**2)*target_size*var_eta_1/((1. - self.gamma)**2)
             vari = vari.sum()
@@ -436,11 +456,13 @@ class MinWeightsEstimator():
             bias = 0.
             for j in range(self.m):
                 bias += self.source_sizes[j] * (target_grad -
-                                                (w[w_idx[j]:w_idx[j + 1]].reshape((-1, 1)) * self.source_samples[j]['eta_1']).mean(axis=0) /
-                                                (1. - self.gamma)) / n
+                                                (w[reduced_w_idx[j]:reduced_w_idx[j + 1]][:,None] * self.source_samples[j]['eta_1']).sum(axis=0) /
+                                                (self.source_sizes[j]*(1. - self.gamma))) / n
             grad = np.zeros(w.shape + (2,), dtype=np.float64)
             for j in range(self.m):
-                    grad[w_idx[j]:w_idx[j + 1]] = 2 * self.source_samples[j]['eta_1'] * (-bias / (1. - self.gamma) + self.source_samples[j]['eta_1'] * w[w_idx[j]:w_idx[j + 1]].reshape((-1, 1)) / (1. - self.gamma) ** 2 - (self.source_samples[j]['eta_1'] * w[w_idx[j]:w_idx[j + 1]].reshape((-1, 1))).sum() / (self.source_sizes[j] * (1. - self.gamma) ** 2)) / n ** 2
+                    grad[reduced_w_idx[j]:reduced_w_idx[j + 1]] = 2 * self.source_samples[j]['eta_1'] * (-bias / (1. - self.gamma) +
+                                                                                                         self.source_samples[j]['eta_1'] * w[reduced_w_idx[j]:reduced_w_idx[j + 1]][:,None] / (self.source_samples[j]['grp_szs'][:,None]*(1. - self.gamma) ** 2) -
+                                                                                                         (self.source_samples[j]['eta_1'] * w[reduced_w_idx[j]:reduced_w_idx[j + 1]].reshape((-1, 1))).sum() / (self.source_sizes[j] * (1. - self.gamma) ** 2)) / n ** 2
             grad = grad.sum(axis=1)
             return grad
 
@@ -458,20 +480,26 @@ class MinWeightsEstimator():
         vari = 0.
         for j in range(self.m):
             bias += self.source_sizes[j] * (target_grad -
-                                            (w[w_idx[j]:w_idx[j + 1]].reshape((-1, 1)) * self.source_samples[j]['eta_1']).mean(axis=0) /
-                                            (1. - self.gamma)) / n
-            vari += self.source_sizes[j] * np.var(w[w_idx[j]:w_idx[j + 1]].reshape((-1, 1)) * self.source_samples[j]['eta_1'], axis=0) / (n * (1. - self.gamma)) ** 2
-            var_ncx += self.source_sizes[j] * np.var(w[w_idx[j]:w_idx[j + 1]].reshape((-1, 1)) * self.source_samples[j]['eta_1'],
-                                                     axis=0) /\
+                                            (w[reduced_w_idx[j]:reduced_w_idx[j + 1]][:, None] * self.source_samples[j]['eta_1']).sum(axis=0) /
+                                            (self.source_sizes[j] * (1. - self.gamma))) / n
+            vari += ((((w[reduced_w_idx[j]:reduced_w_idx[j + 1]][:, None] * self.source_samples[j]['eta_1']) ** 2) / self.source_samples[j]['grp_szs'][:,None]).sum(axis=0) -
+                         ((w[reduced_w_idx[j]:reduced_w_idx[j + 1]][:, None] * self.source_samples[j]['eta_1']).sum(axis=0)) ** 2 / self.source_sizes[j]) / (n * (1. - self.gamma)) ** 2
+            var_ncx += self.source_sizes[j] * ((((w[reduced_w_idx[j]:reduced_w_idx[j + 1]][:, None] * self.source_samples[j]['eta_1']) ** 2) / self.source_samples[j]['grp_szs'][:,None]).sum(axis=0) -
+                                               ((w[reduced_w_idx[j]:reduced_w_idx[j + 1]][:, None] * self.source_samples[j]['eta_1']).sum(axis=0)) ** 2 / self.source_sizes[j]) /\
                        (n * (1. - self.gamma)) ** 2
             var_gauss += (self.source_sizes[j] / (n * (1. - self.gamma)) ** 2) ** 2 * \
-                         (moment(w[w_idx[j]:w_idx[j + 1]].reshape((-1, 1)) * self.source_samples[j]['eta_1'],moment=4,axis=0) -
-                          ((self.source_sizes[j] - 3) / (self.source_sizes[j] - 1)) * np.var(w[w_idx[j]:w_idx[j + 1]].reshape((-1, 1)) * self.source_samples[j]['eta_1'], axis=0) ** 2) / self.source_sizes[j] +\
-                         ((1./n**2 - 1./target_size**2)*target_size/((1. - self.gamma)**2))**2*\
-                         (moment(eta_1, moment=4, axis=0) - ((target_size - 3) / (target_size - 1)) * np.var(eta_1, axis=0) ** 2) / target_size
+                         (moment(np.repeat(w[reduced_w_idx[j]:reduced_w_idx[j + 1]][:,None]*
+                                           self.source_samples[j]['eta_1']/self.source_samples[j]['grp_szs'][:,None],
+                                           self.source_samples[j]['grp_szs'].astype(np.int32), axis=0),
+                                 moment=4, axis=0) -
+                          ((self.source_sizes[j] - 3) / (self.source_sizes[j] - 1)) * ((((w[reduced_w_idx[j]:reduced_w_idx[j + 1]][:, None] * self.source_samples[j]['eta_1']) ** 2) / self.source_samples[j]['grp_szs'][:,None]).sum(axis=0) -
+                                                                                       ((w[reduced_w_idx[j]:reduced_w_idx[j + 1]][:, None] * self.source_samples[j]['eta_1']).sum(axis=0)) ** 2 / self.source_sizes[j]) ** 2) /\
+                         self.source_sizes[j]
         bias = np.abs(bias)
         vari += (1. / n ** 2 - 1. / target_size ** 2) * target_size * var_eta_1 / ((1. - self.gamma) ** 2)
         vari = vari.sum()
+        var_gauss += ((1./n**2 - 1./target_size**2)*target_size/((1. - self.gamma)**2))**2*\
+                     (moment(eta_1, moment=4, axis=0) - ((target_size - 3) / (target_size - 1)) * np.var(eta_1, axis=0) ** 2) / target_size
         var_gauss = var_gauss.sum()
         lb, ub = 0., 0.
         try:
@@ -483,17 +511,118 @@ class MinWeightsEstimator():
             ub += (d**2)*var_ncx[1]
             lb += vari - norm.ppf(0.1/2.)*np.sqrt(var_gauss)
             ub += vari + norm.ppf(0.1/2.)*np.sqrt(var_gauss)
-        except subprocess.CalledProcessError:
+        except (ValueError, ZeroDivisionError):
             lb = 1.
 
-        return res.x, lb <= 0.
+        all_w = np.zeros(self.source_sizes.sum(), dtype=np.float64)
+        w_idx = np.hstack((0., self.source_sizes)).cumsum().astype(np.int64)
+        for j in range(self.m):
+            aux = np.repeat(res.x, self.source_samples[j]['grp_szs'].astype(np.int32))
+            inv = np.empty(self.source_samples[j]['idx_s'].shape[0], dtype=np.int64)
+            inv[self.source_samples[j]['idx_s']] = np.arange(self.source_samples[j]['idx_s'].shape[0])
+            all_w[w_idx[j]:w_idx[j + 1]] = aux[inv]
+
+        return all_w, lb <= 0.
 
 
-#577
+
     def build_CI(self, y):
-        r_script = 'C:/Users/danie/Documents/Daniel/Dropbox/PoliMi/Semestre 4/Thesis/RL-TL-Code/Importance sampling/CI.r'
-        r_command = 'C:/Program Files/R/R-3.3.1/bin/Rscript'
-        args = [str(y), str(1), str(0.1)]
-        out = str(subprocess.check_output([r_command, r_script] + args, universal_newlines=True))
-        out = np.array(list(map(float, str.split(out, ' '))), dtype=np.float64)
-        return out
+        alpha = 0.1
+        dof = 1.
+        u0 = self.F_inv_ncx(1.-alpha, dof, 0.)
+        nu = (dof - 2.)/2.
+        zz = -norm.ppf(alpha/2.)
+        if y <= u0:
+            ll = 0.
+        else:
+            ly = self.lamfind(y, dof, 1.-alpha)
+            g0 = self.gr(0., nu, ly)
+            gy = self.gr(y, nu, ly)
+            if g0 >= gy:
+                ll = ly
+            else:
+                def f1(cd):
+                    return np.log(self.gr(y, nu, cd[0])/self.gr(cd[1], nu, cd[0]))**2 +\
+                           (self.F_ncx(y, dof, cd[0]) - self.F_ncx(cd[1], dof, cd[0]) - (1. - alpha))**2
+                st = np.array([y-zz, y-2*zz], dtype=np.float64)
+                if st[0] <= 0:
+                    st[0] = 0.1*(y + 0.1)
+                if st[1] <= 0:
+                    st[1] = 0.05*(y + 0.1)
+                ll = minimize(f1, st, constraints=[
+                    {
+                        'type':'ineq',
+                        'fun':lambda x:x[0]
+                    },
+                    {
+                        'type': 'ineq',
+                        'fun': lambda x: x[1]
+                    }
+                ])
+                ll = ll.x[0]
+
+        def f1(cd):
+            return np.log(self.gr(y, nu, cd[0]) / self.gr(cd[1], nu, cd[0])) ** 2 + \
+                   (self.F_ncx(cd[1], dof, cd[0]) - self.F_ncx(y, dof, cd[0]) - (1. - alpha)) ** 2
+        st = np.array([y + zz, y + 2*zz], dtype=np.float64)
+        lu = minimize(f1, st, constraints=[
+            {
+                'type': 'ineq',
+                'fun': lambda x: x[0]
+            },
+            {
+                'type': 'ineq',
+                'fun': lambda x: x[1]
+            }
+        ])
+        lu = lu.x[0]
+
+        return ll, lu
+
+
+
+    def F_ncx(self, u, dof, lam):
+        if lam > 0:
+            return ncx2.cdf(u**2, dof, lam**2)
+        else:
+            return chi2.cdf(u**2, dof)
+
+
+
+    def F_inv_ncx(self, prob, dof, lam):
+        if lam > 0:
+            return np.sqrt(ncx2.ppf(prob, dof, lam**2))
+        else:
+            return np.sqrt(chi2.ppf(prob, dof))
+
+
+
+    def lambound(self, y, dof, alpha):
+        lam = 1.
+        obj = 1.
+        while obj > 0.:
+            lam *= 2.
+            obj = self.F_ncx(y, dof, lam) - alpha
+        return lam
+
+
+
+    def lamfind(self, y, dof, alpha):
+        if alpha < 1e-4 or self.F_ncx(y, dof, 0.) < alpha:
+            print("Bad lam find")
+            return
+        lbig = self.lambound(y, dof, alpha)
+        res = brentq(lambda x: self.F_ncx(y, dof, x) - alpha, 0., lbig)
+        return res
+
+
+
+    def gr(self, u, nu, lam):
+        ul = u*lam
+        if ul > 0:
+            pdf = ul**(-nu)*iv(nu, ul)*np.exp(-0.5*(u**2+lam**2))
+            if math.isnan(pdf):
+                pdf = 0.
+        else:
+            pdf = 0.5**nu*np.exp(-0.5*(u**2+lam**2))/gam_fun(nu+1.)
+        return pdf
