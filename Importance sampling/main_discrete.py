@@ -213,23 +213,20 @@ print(grad, g)'''
 
 target_sizes = list(range(1000, 10000, 1000)) + list(range(10000, 50000 + 1, 10000))
 n_runs = 10
-'''for _ in range(1):
-    np.random.seed(seed)
-    seed = int(np.random.uniform(high=2**32))'''
 
-'''weights_est = MinWeightsEstimator(gamma)
-out_stream = open('IS_m.log', 'w', buffering=1)
-learner = ISLearner(gamma, pf, lstd_q, lstd_v, grad_est, weights_est, False, False, True, seed)
-for i in [2]:
+#weights_est = MinWeightsEstimator(gamma)
+out_stream = open('IS_mm.log', 'w', buffering=1)
+learner = ISLearner(gamma, pf, lstd_q, lstd_v, grad_est, weights_est, True, True, True, seed)
+for i in [2, 1, 0]:
     print("Task:", power_sources[i], file=out_stream)
     results = learner.learn(target_task, target_sizes, n_runs, [source_tasks[i]], [source_policies[i]], [n_source_samples[i]], out_stream)
-    np.save('learning_app_IS_m' + str(i+1), np.array(results))'''
+    np.save('learning_app_IS_mm' + str(i+1), np.array(results))
 
 '''print("All tasks", file=out_stream)
 results = learner.learn(target_task, target_sizes, n_runs, source_tasks, source_policies, n_source_samples, out_stream)
 np.save('learning_app_IS_all', np.array(results))'''
 
-out_stream = sys.stdout# open('IS_test.log', 'w', buffering=1)
+'''out_stream = sys.stdout# open('IS_test.log', 'w', buffering=1)
 target_sizes = [5000]
 learner = ISLearner(gamma, pf, lstd_q, lstd_v, grad_est, None, False, False, False, seed)
 for i in [2,1,0]:
@@ -239,7 +236,7 @@ for i in [2,1,0]:
 
 print("All tasks", file=out_stream)
 results = learner.learn(target_task, target_sizes, n_runs, source_tasks, source_policies, n_source_samples, out_stream)
-np.save('learning_app_IS_all', np.array(results))
+np.save('learning_app_IS_all', np.array(results))'''
 
 
 '''out_stream = open('Learning.log', 'w', buffering=1)

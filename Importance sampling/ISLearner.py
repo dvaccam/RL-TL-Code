@@ -187,11 +187,11 @@ class ISLearner:
                         all_target_Q = target_task.env.Q
                     self.weights_estimator.prepare_gradient(pol, target_task.env.power, all_target_Q, Vs[target_size:])
 
-                    '''weights_zeta = self.weights_estimator.estimate_weights_gradient(target_size)
+                    weights_zeta = self.weights_estimator.estimate_weights_gradient(target_size)
                     grad = self.gradient_estimator.estimate_gradient(target_samples, pol.log_gradient_matrix[transfer_samples['fsi'],
                                                                                                              transfer_samples['ai']],
-                                                                     Q=Qs, V=Vs, source_weights=weights_zeta)'''
-                    grad_J1 = self.gradient_estimator.estimate_gradient(target_samples,
+                                                                     Q=Qs, V=Vs, source_weights=weights_zeta)
+                    '''grad_J1 = self.gradient_estimator.estimate_gradient(target_samples,
                                                                         pol.log_gradient_matrix[target_samples['fsi'], target_samples['ai']],
                                                                         Q=Qs[:target_size], V=Vs[:target_size])
                     weights_zeta, use = self.weights_estimator.estimate_weights(target_samples, pol, target_size, Qs[:target_size],
@@ -202,7 +202,7 @@ class ISLearner:
                         n_uses += 1
                     else:
                         grad = self.gradient_estimator.estimate_gradient(target_samples, pol.log_gradient_matrix[target_samples['fsi'], target_samples['ai']],
-                                                                         Q=Qs[:target_size], V=Vs[:target_size])
+                                                                         Q=Qs[:target_size], V=Vs[:target_size])'''
                 else:
                     if weights_zeta is None:
                         weights_zeta = []
@@ -213,7 +213,7 @@ class ISLearner:
                         weights_zeta = np.concatenate(weights_zeta)
                     grad = self.gradient_estimator.estimate_gradient(target_samples, pol.log_gradient_matrix[transfer_samples['fsi'],
                                                                                                              transfer_samples['ai']],
-                                                                     Q=Qs, V=Vs, source_weights=None)
+                                                                     Q=Qs, V=Vs, source_weights=weights_zeta)
                 '''g = pol.log_gradient_matrix.copy()
                 g = np.transpose(g, axes=(2, 0, 1)) * (target_task.env.Q * target_task.env.zeta_distr)
                 g = np.transpose(g, axes=(1, 2, 0)).sum(axis=(0, 1))/(1. - self.gamma)
