@@ -29,7 +29,7 @@ class BatchLearner:
             else:
                 print("No transfer", file=self.out_stream)
 
-        results = np.zeros((n_runs, len(n_target_samples), 3), dtype=np.float64)
+        results = np.zeros((n_runs, len(n_target_samples)), dtype=np.float64)
         for run_idx in range(n_runs):
             print("Run:", run_idx + 1, file=self.out_stream)
             np.random.seed(self.seed)
@@ -206,6 +206,7 @@ class BatchLearner:
         state_groups[1:] = state_sorted[1:] != state_sorted[:-1]
         action_groups[1:] = action_sorted[1:] != action_sorted[:-1]
         groups = np.logical_or(state_groups, action_groups)
+        groups = np.arange(groups.shape[0])[groups]
         probs_sa = np.multiply.reduceat(probs, groups)
         return probs_sa.mean()
 

@@ -118,6 +118,7 @@ class ISLearner:
         alpha1 = np.random.uniform()
         alpha2 = np.random.uniform()
         print("Starting point:", [alpha1, alpha2], file=self.out_stream)
+        weights_zeta = None
         n_uses = 0
 
         while grad_norm > 1e-3 and iter <= max_iters:
@@ -172,7 +173,9 @@ class ISLearner:
                         weights_v = weights_zeta*weights_p
 
                     Qs = self.q_estimator.fit(target_samples, predict=True, source_weights=weights_q)
+                    #Qs1 = self.q_estimator.fit(target_samples, predict=True)
                     Vs = self.v_estimator.fit(target_samples, predict=True, source_weights=weights_v)
+                    #Vs1 = self.v_estimator.fit(target_samples, predict=True)
                 else:
                     Qs = target_task.env.Q[transfer_samples['fsi'], transfer_samples['ai']]
                     Vs = target_task.env.V[transfer_samples['fsi']]
@@ -193,7 +196,6 @@ class ISLearner:
                                                                         Q=Qs[:target_size], V=Vs[:target_size])
                     weights_zeta, use = self.weights_estimator.estimate_weights(target_samples, pol, target_size, Qs[:target_size],
                                                                                 Vs[:target_size], grad_J1)
-                    use = True
                     if use:
                         grad = self.gradient_estimator.estimate_gradient(target_samples, pol.log_gradient_matrix[transfer_samples['fsi'], transfer_samples['ai']],
                                                                          Q=Qs, V=Vs, source_weights=weights_zeta)
@@ -211,7 +213,7 @@ class ISLearner:
                         weights_zeta = np.concatenate(weights_zeta)
                     grad = self.gradient_estimator.estimate_gradient(target_samples, pol.log_gradient_matrix[transfer_samples['fsi'],
                                                                                                              transfer_samples['ai']],
-                                                                     Q=Qs, V=Vs, source_weights=weights_zeta)
+                                                                     Q=Qs, V=Vs, source_weights=None)
                 '''g = pol.log_gradient_matrix.copy()
                 g = np.transpose(g, axes=(2, 0, 1)) * (target_task.env.Q * target_task.env.zeta_distr)
                 g = np.transpose(g, axes=(1, 2, 0)).sum(axis=(0, 1))/(1. - self.gamma)
@@ -284,4 +286,79 @@ class ISLearner:
             source_task.env.set_policy(source_policy, self.gamma)
             source_sample_probs = source_policy.choice_matrix[next_state_idx, next_action_idx]
         target_sample_probs = target_policy.choice_matrix[next_state_idx, next_action_idx]
+        return target_sample_probs / source_sample_probs
+
+
+    def calculate_density_ratios_transition_sa(self, dataset, source_task, target_task, source_policy, target_policy,
+                                               source_sample_probs=None):
+        target_task.env.set_policy(target_policy, self.gamma)
+        state_idx = dataset['fsi']
+        action_idx = dataset['ai']
+        next_state_idx = dataset['nsi']
+        next_action_idx = dataset['nai']
+        if source_sample_probs is None:
+            source_task.env.set_policy(source_policy, self.gamma)
+            source_sample_probs = \
+                source_task.env.transition_matrix[state_idx, action_idx, next_state_idx] * source_policy.choice_matrix[
+                    next_state_idx, next_action_idx]
+        target_sample_probs = \
+            target_task.env.transition_matrix[state_idx, action_idx, next_state_idx] * target_policy.choice_matrix[
+                next_state_idx, next_action_idx]
+        return target_sample_probs / source_sample_probs
+
+
+    def calculate_density_ratios_r_sa(self, dataset, source_task, target_task, source_policy, target_policy,
+                                      source_sample_probs=None):
+        target_task.env.set_policy(target_policy, self.gamma)
+        state_idx = dataset['fsi']
+        action_idx = dataset['ai']
+        next_state_idx = dataset['nsi']
+        if source_sample_probs is None:
+            source_task.env.set_policy(source_policy, self.gamma)
+            source_sample_probs = source_task.env.transition_matrix[state_idx, action_idx, next_state_idx]
+        target_sample_probs = target_task.env.transition_matrix[state_idx, action_idx, next_state_idx]
+        return target_sample_probs / source_sample_probs
+
+
+    def calculate_density_ratios_delta(self, dataset, source_task, target_task, source_policy, target_policy,
+                                       source_sample_probs=None):
+        target_task.env.set_policy(target_policy, self.gamma)
+        state_idx = dataset['fsi']
+        if source_sample_probs is None:
+            source_task.env.set_policy(source_policy, self.gamma)
+            source_sample_probs = source_task.env.delta_distr[state_idx]
+        target_sample_probs = target_task.env.delta_distr[state_idx]
+        return target_sample_probs / source_sample_probs
+
+
+    def calculate_density_ratios_transition_s(self, dataset, source_task, target_task, source_policy, target_policy,
+                                              source_sample_probs=None):
+        target_task.env.set_policy(target_policy, self.gamma)
+        state_idx = dataset['fsi']
+        next_state_idx = dataset['nsi']
+        if source_sample_probs is None:
+            source_task.env.set_policy(source_policy, self.gamma)
+            source_sample_probs = \
+                (source_policy.choice_matrix[state_idx, :] * source_task.env.transition_matrix[state_idx, :,
+                                                             next_state_idx]).sum(axis=1)
+        target_sample_probs = \
+            (target_policy.choice_matrix[state_idx, :] * target_task.env.transition_matrix[state_idx, :,
+                                                         next_state_idx]).sum(axis=1)
+        return target_sample_probs / source_sample_probs
+
+
+    def calculate_density_ratios_r_s(self, dataset, source_task, target_task, source_policy, target_policy,
+                                     source_sample_probs=None):
+        target_task.env.set_policy(target_policy, self.gamma)
+        state_idx = dataset['fsi']
+        action_idx = dataset['ai']
+        next_state_idx = dataset['nsi']
+        if source_sample_probs is None:
+            source_task.env.set_policy(source_policy, self.gamma)
+            source_sample_probs = source_policy.choice_matrix[state_idx, action_idx] * \
+                                  source_task.env.transition_matrix[state_idx, action_idx, next_state_idx]
+        target_sample_probs = target_policy.choice_matrix[state_idx, action_idx] * target_task.env.transition_matrix[
+            state_idx, action_idx, next_state_idx]
+
+
         return target_sample_probs / source_sample_probs

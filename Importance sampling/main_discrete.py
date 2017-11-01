@@ -217,29 +217,29 @@ n_runs = 10
     np.random.seed(seed)
     seed = int(np.random.uniform(high=2**32))'''
 
-weights_est = MinWeightsEstimator(gamma)
+'''weights_est = MinWeightsEstimator(gamma)
 out_stream = open('IS_m.log', 'w', buffering=1)
 learner = ISLearner(gamma, pf, lstd_q, lstd_v, grad_est, weights_est, False, False, True, seed)
 for i in [2]:
     print("Task:", power_sources[i], file=out_stream)
     results = learner.learn(target_task, target_sizes, n_runs, [source_tasks[i]], [source_policies[i]], [n_source_samples[i]], out_stream)
-    np.save('learning_app_IS_m' + str(i+1), np.array(results))
+    np.save('learning_app_IS_m' + str(i+1), np.array(results))'''
 
 '''print("All tasks", file=out_stream)
 results = learner.learn(target_task, target_sizes, n_runs, source_tasks, source_policies, n_source_samples, out_stream)
 np.save('learning_app_IS_all', np.array(results))'''
 
-
-'''out_stream = sys.stdout#open('IS.log', 'w', buffering=1)
+out_stream = sys.stdout# open('IS_test.log', 'w', buffering=1)
+target_sizes = [5000]
 learner = ISLearner(gamma, pf, lstd_q, lstd_v, grad_est, None, False, False, False, seed)
 for i in [2,1,0]:
     print("Task:", power_sources[i], file=out_stream)
     results = learner.learn(target_task, target_sizes, n_runs, [source_tasks[i]], [source_policies[i]], [n_source_samples[i]], out_stream)
-    np.save('learning_app_IS' + str(i+1), np.array(results))
+    #np.save('learning_app_IS_weird' + str(i+1), np.array(results))
 
 print("All tasks", file=out_stream)
 results = learner.learn(target_task, target_sizes, n_runs, source_tasks, source_policies, n_source_samples, out_stream)
-np.save('learning_app_IS_all', np.array(results))'''
+np.save('learning_app_IS_all', np.array(results))
 
 
 '''out_stream = open('Learning.log', 'w', buffering=1)
@@ -251,7 +251,7 @@ np.save('learning', np.array(results))'''
 
 '''out_stream = open('Batch.log', 'w', buffering=1)
 learner = BatchLearner(gamma, pf, lstd_q, lstd_v, grad_est, seed)
-for i in range(len(source_tasks)):
+for i in [2,1,0]:
     print("Task:", power_sources[i], file=out_stream)
     results = learner.learn(target_task, target_sizes, n_runs, [source_tasks[i]], [source_policies[i]], out_stream)
     np.save('learning_app_batch_' + str(i+1), np.array(results))
