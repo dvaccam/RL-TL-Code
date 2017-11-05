@@ -232,6 +232,9 @@ class ISLearner:
                               (0 < alpha2 < 1) or ((alpha2 < 1 or grad[1] < 0) and (alpha2 > 0 or grad[1] > 0))])
             grad_norm = np.linalg.norm(grad)
             grad /= np.linalg.norm(grad, ord=np.inf) if grad_norm != 0. else 1.
+            if iter % 40 == 0:
+                print(iter)
+                sys.stdout.flush()
             iter += 1
             step_size -= (0.01 - 0.001) / max_iters
             weights_zeta = None
