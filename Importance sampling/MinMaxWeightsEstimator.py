@@ -64,6 +64,10 @@ class MinMaxWeightsEstimator():
             self.M_P_eps_s_a_s_prime = np.zeros((self.m,) + source_tasks[0].env.transition_matrix.shape, dtype=np.float64)
 
         if self.for_LSTDQ:
+            self.zeta_rep = np.zeros((self.m,) + source_tasks[0].env.Q.shape + source_tasks[0].env.Q.shape, dtype=np.float64)
+            self.p_rep = np.zeros((self.m,) + source_tasks[0].env.Q.shape + source_tasks[0].env.Q.shape, dtype=np.float64)
+            self.L_p_rep = np.zeros((self.m,) + source_tasks[0].env.Q.shape + source_tasks[0].env.Q.shape, dtype=np.float64)
+            self.M_p_rep = np.zeros((self.m,) + source_tasks[0].env.Q.shape + source_tasks[0].env.Q.shape, dtype=np.float64)
             self.delta_d_q = np.zeros((self.m,) + source_tasks[0].env.Q.shape + source_tasks[0].env.Q.shape, dtype=np.float64)
             self.delta_d_q_b = np.zeros((self.m,) + source_tasks[0].env.Q.shape + source_tasks[0].env.V.shape, dtype=np.float64)
             self.delta_A_q = np.zeros((self.m, self.n_features_q, self.n_features_q), dtype=np.float64)
@@ -364,6 +368,18 @@ class MinMaxWeightsEstimator():
 
                 self.source_samples[j]['rho_q'] = \
                     np.add.reduceat(all_phi_Q_rsp[state_sorted,action_sorted]*source_samples[j]['r'][sorted_idx,None], groups, axis=0)
+                self.zeta_rep[j] = np.repeat(source_tasks[j].env.zeta_distr[:,:,None],
+                                             source_tasks[j].env.Q.size,
+                                             axis=2).reshape(source_tasks[0].env.Q.shape + source_tasks[0].env.Q.shape)
+                self.p_rep[j] = np.repeat(source_tasks[j].env.transition_matrix[:,:,:,None],
+                                          source_tasks[j].env.Q.shape[1],
+                                          axis=3)
+                self.L_p_rep[j] = np.repeat(self.L_P_eps_s_a_s_prime[j][:, :, :, None],
+                                            source_tasks[j].env.Q.shape[1],
+                                            axis=3)
+                self.M_p_rep[j] = np.repeat(self.M_P_eps_s_a_s_prime[j][:, :, :, None],
+                                            source_tasks[j].env.Q.shape[1],
+                                            axis=3)
 
             if self.for_LSTDV:
                 groups = np.logical_or.reduce((state_groups, action_groups, next_state_groups))
@@ -420,27 +436,26 @@ class MinMaxWeightsEstimator():
                                                       self.L_P_eps_s_a_s_prime[i]*np.abs(self.source_tasks[i].env.power - target_power), 0., 1.)
             if self.for_LSTDQ:
                 reduced_w_idx = np.hstack((0., self.reduced_source_sizes_q)).cumsum().astype(np.int64)
-                self.delta_d_q[i] = self.source_tasks[i].env.zeta_distr[:, :, None, None] * \
-                                    self.source_tasks[i].env.transition_matrix[:, :, :, None] * \
-                                    np.abs(target_policy.choice_matrix - self.source_policies[i].choice_matrix)[None, None, :, :] + \
-                                    target_policy.choice_matrix[None, None, :, :] * self.source_tasks[i].env.zeta_distr[:, :, None, None] * \
-                                    np.clip(self.L_P_eps_s_a_s_prime[i] * np.abs(self.source_tasks[i].env.power - target_power), 0., 1.)[:, :, :, None] + \
-                                    target_policy.choice_matrix[None, None, :, :] * self.M_P_eps_s_a_s_prime[i][:, :, :, None] * \
-                                    np.clip(self.delta_zeta[i], 0., 1.)[:, :, None, None]
-                #self.delta_d_q[i] = self.source_tasks[i].env.zeta_distr[:, :, None, None] *\
+                #self.delta_d_q[i] = self.source_tasks[i].env.zeta_distr[:, :, None, None] * \
                 #                    self.source_tasks[i].env.transition_matrix[:, :, :, None] * \
-                #                    np.abs(target_policy.choice_matrix - self.source_policies[i].choice_matrix)[None,None, :, :]
-                #self.delta_d_q[i] += target_policy.choice_matrix[None, None, :, :] * self.source_tasks[i].env.zeta_distr[:,:, None, None] * \
-                #                     np.clip(self.L_P_eps_s_a_s_prime[i] * np.abs(self.source_tasks[i].env.power - target_power), 0., 1.)[:, :, :, None]
-                #self.delta_d_q[i] += target_policy.choice_matrix[None, None, :, :] * self.M_P_eps_s_a_s_prime[i][:, :, :,None] * \
-                #                     np.clip(self.delta_zeta[i], 0., 1.)[:, :, None, None]
+                #                    np.abs(target_policy.choice_matrix - self.source_policies[i].choice_matrix)[None, None, :, :] + \
+                #                    target_policy.choice_matrix[None, None, :, :] * self.source_tasks[i].env.zeta_distr[:, :, None, None] * \
+                #                    np.clip(self.L_P_eps_s_a_s_prime[i] * np.abs(self.source_tasks[i].env.power - target_power), 0., 1.)[:, :, :, None] + \
+                #                    target_policy.choice_matrix[None, None, :, :] * self.M_P_eps_s_a_s_prime[i][:, :, :, None] * \
+                #                    np.clip(self.delta_zeta[i], 0., 1.)[:, :, None, None]
+                self.delta_d_q[i] = self.source_tasks[i].env.zeta_distr[:, :, None, None] *\
+                                    self.source_tasks[i].env.transition_matrix[:, :, :, None] * \
+                                    np.abs(target_policy.choice_matrix - self.source_policies[i].choice_matrix)[None,None, :, :]
+                self.delta_d_q[i] += target_policy.choice_matrix[None, None, :, :] * self.source_tasks[i].env.zeta_distr[:,:, None, None] * \
+                                     np.clip(self.L_P_eps_s_a_s_prime[i] * np.abs(self.source_tasks[i].env.power - target_power), 0., 1.)[:, :, :, None]
+                self.delta_d_q[i] += target_policy.choice_matrix[None, None, :, :] * self.M_P_eps_s_a_s_prime[i][:, :, :,None] * \
+                                     np.clip(self.delta_zeta[i], 0., 1.)[:, :, None, None]
                 self.delta_d_q_b[i] = self.source_tasks[i].env.zeta_distr[:,:, None] * \
                                       np.clip(self.L_P_eps_s_a_s_prime[i] * np.abs(self.source_tasks[i].env.power - target_power), 0., 1.) + \
                                       self.M_P_eps_s_a_s_prime[i] * np.clip(self.delta_zeta[i], 0., 1.)[:, :, None]
                 #self.delta_d_q_b[i] = self.source_tasks[i].env.zeta_distr[:, :, None] * \
                 #                      np.clip(self.L_P_eps_s_a_s_prime[i] * np.abs(self.source_tasks[i].env.power - target_power), 0., 1.)
                 #self.delta_d_q_b[i] += self.M_P_eps_s_a_s_prime[i] * np.clip(self.delta_zeta[i], 0., 1.)[:, :, None]
-
                 self.delta_A_q[i] = self.all_phi_Q.T.dot(np.clip(self.delta_d_q[i], 0., 1.).reshape((self.all_phi_Q.shape[0],
                                                                                                       self.all_phi_Q.shape[0],1)).sum(axis=1))
                 #self.delta_A_q[i] = self.all_phi_Q.T.dot((np.abs(self.all_phi_Q[:,None,:] - self.gamma*self.all_phi_Q[None,:,:])*
@@ -475,10 +490,9 @@ class MinMaxWeightsEstimator():
                 self.delta_d_v[i] = self.source_tasks[i].env.zeta_distr[:, :, None] * \
                                     np.clip(self.L_P_eps_s_a_s_prime[i] * np.abs(self.source_tasks[i].env.power - target_power), 0., 1.) + \
                                     self.M_P_eps_s_a_s_prime[i] * np.clip(self.delta_zeta[i], 0., 1.)[:, :, None]
-                #self.delta_d_v[i] = self.source_tasks[i].env.zeta_distr[:,:, None] * \
-                #                    np.clip(self.L_P_eps_s_a_s_prime[i] * np.abs(self.source_tasks[i].env.power - target_power),0., 1.)
-                #self.delta_d_v[i] += self.M_P_eps_s_a_s_prime[i] * np.clip(self.delta_zeta[i], 0., 1.)[:, :, None]
-
+                self.delta_d_v[i] = self.source_tasks[i].env.zeta_distr[:,:, None] * \
+                                    np.clip(self.L_P_eps_s_a_s_prime[i] * np.abs(self.source_tasks[i].env.power - target_power),0., 1.)
+                self.delta_d_v[i] += self.M_P_eps_s_a_s_prime[i] * np.clip(self.delta_zeta[i], 0., 1.)[:, :, None]
                 self.delta_A_v[i] = self.all_phi_V.T.dot((np.abs(self.all_phi_V[:, None, :] - self.gamma * self.all_phi_V[None, :, :]) *
                                                                 np.clip(self.delta_d_v[i], 0., 1.).sum(axis=1)[:,:,None]).sum(axis=1))
                 #for k in range(self.n_features_v):
@@ -606,7 +620,6 @@ class MinMaxWeightsEstimator():
         scale = 1e5
         
         def g(w):
-            s = time.time()
             nonlocal bias_A, bias_b
             bias_A = np.zeros((self.n_features_q, self.n_features_q), dtype=np.float64)
             bias_b = np.zeros(self.n_features_q, dtype=np.float64)
@@ -631,12 +644,9 @@ class MinMaxWeightsEstimator():
             bias_b = np.abs(bias_b) + init_bias_b
             bias_b_sq = (bias_b**2).sum()
             vari_b = vari_b.sum()
-            e = time.time()
-            #print(e-s)
             return (bias_A_sq + vari_A + bias_b_sq + vari_b)*scale
 
         def grad_g(w):
-            s = time.time()
             grad_A = np.zeros(w.shape + (self.n_features_q,self.n_features_q), dtype=np.float64)
             grad_b = np.zeros(w.shape + (self.n_features_q,), dtype=np.float64)
             for j in range(self.m):
@@ -644,12 +654,6 @@ class MinMaxWeightsEstimator():
                                                                 (np.power(-1., sum_etas_A > 0) * bias_A +
                                                                  self.source_samples[j]['var_phi_q'] * (w[reduced_w_idx[j]:reduced_w_idx[j + 1]] / self.source_samples[j]['grp_szs_q'])[:, None, None] -
                                                                  (self.source_samples[j]['var_phi_q'] * w[reduced_w_idx[j]:reduced_w_idx[j + 1]][:, None, None]).sum(axis=0) / self.source_sizes[j])
-                #ax = ((2 * self.source_samples[j]['var_phi_q'] / n ** 2) *(np.power(-1., sum_etas_A > 0) * bias_A)).sum(axis=(1,2))
-                #print(ax[:10], np.mean(ax), np.median(ax))
-                #ax = ((2 * self.source_samples[j]['var_phi_q'] / n ** 2) * self.source_samples[j]['var_phi_q'] * (w[reduced_w_idx[j]:reduced_w_idx[j + 1]] / self.source_samples[j]['grp_szs_q'])[:, None, None]).sum(axis=(1,2))
-                #print(ax[:10], np.mean(ax), np.median(ax))
-                #ax = ((2 * self.source_samples[j]['var_phi_q'] / n ** 2) * (self.source_samples[j]['var_phi_q'] * w[reduced_w_idx[j]:reduced_w_idx[j + 1]][:, None, None]).sum(axis=0) / self.source_sizes[j]).sum(axis=(1,2))
-                #print(ax[:10], np.mean(ax), np.median(ax))
                 #grad_A[reduced_w_idx[j]:reduced_w_idx[j + 1]] = (2 * self.source_samples[j]['var_phi_q']/n**2) * np.power(-1., sum_etas_A > 0) * bias_A
                 #grad_A[reduced_w_idx[j]:reduced_w_idx[j + 1]] += (2 * self.source_samples[j]['var_phi_q']/n**2)*self.source_samples[j]['var_phi_q'] * (w[reduced_w_idx[j]:reduced_w_idx[j + 1]]/self.source_samples[j]['grp_szs_q'])[:,None,None]
                 #grad_A[reduced_w_idx[j]:reduced_w_idx[j + 1]] -= (2 * self.source_samples[j]['var_phi_q']/n**2)*(self.source_samples[j]['var_phi_q'] * w[reduced_w_idx[j]:reduced_w_idx[j + 1]][:,None,None]).sum(axis=0) / self.source_sizes[j]
@@ -658,32 +662,13 @@ class MinMaxWeightsEstimator():
                                                self.source_samples[j]['rho_q'] * (w[reduced_w_idx[j]:reduced_w_idx[j + 1]]/self.source_samples[j]['grp_szs_q'])[:,None] -
                                                (self.source_samples[j]['rho_q'] * w[reduced_w_idx[j]:reduced_w_idx[j + 1]][:,None]).sum(axis=0) / self.source_sizes[j]) /\
                                               n ** 2
-                #ax = ((2 * self.source_samples[j]['rho_q'] / n ** 2) * (np.power(-1., sum_etas_b > 0) * bias_b)).sum(axis=1)
-                #print(ax[:10], np.mean(ax), np.median(ax))
-                #ax = ((2 * self.source_samples[j]['rho_q'] / n ** 2) * self.source_samples[j]['rho_q'] * (w[reduced_w_idx[j]:reduced_w_idx[j + 1]]/self.source_samples[j]['grp_szs_q'])[:,None]).sum(axis=1)
-                #print(ax[:10], np.mean(ax), np.median(ax))
-                #ax = ((2 * self.source_samples[j]['rho_q'] / n ** 2) * (self.source_samples[j]['rho_q'] * w[reduced_w_idx[j]:reduced_w_idx[j + 1]][:,None]).sum(axis=0) / self.source_sizes[j]).sum(axis=1)
-                #print(ax[:10], np.mean(ax), np.median(ax))
             grad = grad_A.sum(axis=(1,2)) + grad_b.sum(axis=1)
-            e = time.time()
-            #print(e - s)
             return grad*scale
 
         bounds = np.ones((self.l_bounds_lstdq.size + self.u_bounds_lstdq.size,), dtype=np.float64)
         bounds[0::2] = self.l_bounds_lstdq
         bounds[1::2] = self.u_bounds_lstdq
         bounds = tuple(map(tuple, bounds.reshape((-1, 2))))
-        '''st = time.time()
-        for _ in range(5):
-            g(w0)
-        et = time.time()
-        print((et-st)/5)
-        st = time.time()
-        for _ in range(5):
-            grad_g(w0)
-        et = time.time()
-        print((et - st)/5)
-        print("Min")'''
         res = minimize(g, w0, jac=grad_g, bounds=bounds)
         all_w = np.zeros(self.source_sizes.sum(), dtype=np.float64)
         w_idx = np.hstack((0., self.source_sizes)).cumsum().astype(np.int64)

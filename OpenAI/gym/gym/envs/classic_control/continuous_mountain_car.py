@@ -45,6 +45,7 @@ class Continuous_MountainCarEnv(gym.Env):
         self.max_initial_state = self.transform(-0.475)
         self.max_speed = self.rescale(0.07)
         self.min_speed = -self.max_speed
+        self.max_energy = 100.
         self.goal_position = self.transform(0.45) # was 0.5 in gym, 0.45 in Arnaud de Broissia's version
         self.bottom_position = self.transform(-0.5)
         self.power = power
@@ -185,10 +186,11 @@ class Continuous_MountainCarEnv(gym.Env):
 
 
 
-    def clean_step(self, initial_state, action):
+    def clean_step(self, initial_state, action, return_info=False):
         if initial_state.size == 2 and action.size == 1:
             position, velocity = initial_state
             force = -1 + 2.0 * (min(max(action[0], self.min_action), self.max_action) - self.min_action)/(self.max_action - self.min_action)
+            bump = False
             if self.model == 'G':
                 velocity += force * self.power - self.rescale(0.0025) * math.cos(3 * self.inverse_transform(position))
                 if (velocity > self.max_speed): velocity = self.max_speed
@@ -204,11 +206,17 @@ class Continuous_MountainCarEnv(gym.Env):
                 position += velocity
                 if (position > self.max_position): position = self.max_position
                 if (position < self.min_position): position = self.min_position
-                if (position <= self.position_bins[1] and velocity < 0): velocity = 0
-            return np.array([position, velocity])
+                if (position <= self.position_bins[1] and velocity < 0):
+                    velocity = 0
+                    bump=True
+            if return_info:
+                return np.array([position, velocity]), bump
+            else:
+                return np.array([position, velocity])
         elif initial_state.ndim == 2 and action.ndim == 2:
             positions = initial_state[:,0].copy()
             velocities = initial_state[:,1].copy()
+            bump = np.zeros_like(positions, dtype=np.bool)
             forces = -1 + 2.0 * (np.clip(action, self.min_action, self.max_action) - self.min_action) / (self.max_action - self.min_action)
             if self.model == 'G':
                 velocities += forces.flatten() * self.power - self.rescale(0.0025) * np.cos(3 * self.inverse_transform(positions))
@@ -222,7 +230,11 @@ class Continuous_MountainCarEnv(gym.Env):
                 positions += velocities
                 positions = np.clip(positions, self.min_position, self.max_position)
                 velocities[np.logical_and(positions <= self.position_bins[1], velocities < 0)] = 0
-        return np.vstack((positions, velocities)).T
+                bump = np.logical_and(positions <= self.position_bins[1], velocities < 0)
+            if return_info:
+                return np.vstack((positions, velocities)).T, bump
+            else:
+                return np.vstack((positions, velocities)).T
 
 
 
@@ -260,6 +272,12 @@ class Continuous_MountainCarEnv(gym.Env):
 
 
     def sample_step(self, n_samples=1):
+        if n_samples == 0:
+            aux = np.zeros((0,2), dtype=np.float64)
+            aux1 = np.zeros(0, dtype=np.float64)
+            aux2 = np.zeros((0,1), dtype=np.float64)
+            return {'fs': aux, 'a': aux2, 'ns': aux, 'na': aux2, 'r': aux1,
+                    'fsi': aux1.astype(np.int32), 'ai': aux1.astype(np.int32), 'nsi': aux1.astype(np.int32), 'nai': aux1.astype(np.int32)}
         idx = np.random.choice(self.zeta_distr.size, p=self.zeta_distr.flatten(), size=n_samples)
         state_idx = (idx / self.action_reps.shape[0]).astype(np.int64)
         action_idx = (idx % self.action_reps.shape[0]).astype(np.int64)
@@ -316,15 +334,40 @@ class Continuous_MountainCarEnv(gym.Env):
             first_state = first_state.ravel()
             action = action.ravel()
             next_state = next_state.ravel()
-            reward = -math.pow(2, np.abs(min(max(action[0], self.min_action), self.max_action))) * 0.1
+            reward = -(2.**(4.*np.abs(min(max(action[0], self.min_action), self.max_action))))
+            #energy = np.clip(np.abs((next_state[1] - first_state[1] + self.rescale(0.0025) * np.cos(3 * self.inverse_transform(first_state[0])))
+            #                        / action),
+            #                    0., self.max_energy)
+            #reward = -(2**energy)*1.
+            #reward = -math.pow(2, np.abs(min(max(action[0], self.min_action), self.max_action)))*0.1 -\
+            #           math.pow(2, np.abs(min(max(next_state[1], self.min_speed), self.max_speed) -
+            #                    min(max(first_state[1], self.min_speed), self.max_speed))) * 0.1
+            #accel = np.abs(next_state[1] - first_state[1] + self.rescale(0.0025) * np.cos(3 * self.inverse_transform(first_state[0])))
+            #reward = -math.pow(2, np.abs(min(max(action[0], self.min_action), self.max_action)))*0.1 -\
+            #         math.pow(2, accel)*0.1
+            #if next_state[0] <= self.position_bins[1] and next_state[1] < 0:
+            #    reward -= 10.
             if next_state[0] >= self.goal_position:
                 reward += 100.
             if first_state[0] >= self.goal_position:
                 reward = 0.
-                #print("Warning: asking for reward from a terminal state")
             return reward
         elif first_state.ndim == 2 and action.ndim == 2 and next_state.ndim == 2:
-            rewards = -np.power(2, np.abs(np.clip(action.flatten(), self.min_action, self.max_action)))*0.1
+            rewards = -(2.**(4.*np.abs(np.clip(action.flatten(), self.min_action, self.max_action))))
+            #energy = np.zeros(first_state.shape[0], dtype=np.float64)
+            #mask_action = action.flatten() != 0.
+            #energy[mask_action] = np.clip(np.abs((next_state[:,1] - first_state[:,1] +
+            #                                      self.rescale(0.0025) * np.cos(3 * self.inverse_transform(first_state[:,0])))[mask_action]
+            #                                     / action.flatten()[mask_action]),
+            #                              0., self.max_energy)
+            #rewards = -(2**energy)*1.
+            #rewards = -np.power(2, np.abs(np.clip(action.flatten(), self.min_action, self.max_action)))*0.1 -\
+            #            np.power(2, np.abs(np.clip(next_state[:,1], self.min_speed, self.max_speed)-
+            #                               np.clip(first_state[:, 1], self.min_speed, self.max_speed)))
+            #rewards = -(2**np.abs(np.clip(action.flatten(), self.min_action, self.max_action)))*0.1 -\
+            #          (2**accels)*0.1
+            #mask = np.logical_and(next_state[:,0] <= self.position_bins[1], next_state[:,1] < 0)
+            #rewards[mask] -= 10.
             mask_1 = next_state[:,0] >= self.goal_position
             rewards[mask_1] += 100.
             mask_2 = first_state[:,0] >= self.goal_position

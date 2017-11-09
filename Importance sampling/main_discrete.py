@@ -110,17 +110,17 @@ max_pos = 10.
 min_act = -1.0
 max_act = -min_act
 seed = 9876
-power_sources = [rescale_state(0.2), rescale_state(0.007), rescale_state(0.0015)]
+power_sources = [rescale_state(0.07), rescale_state(1e-5), rescale_state(0.0025)]
 power_target = rescale_state(0.002)
 alpha_1_sources = [0., 0., 0.]
 alpha_2_sources = [0., 0., 0.]
-alpha_1_target = 1.
-alpha_2_target = 1.
+alpha_1_target = 0.5
+alpha_2_target = 0.1
 action_noise = (max_act - min_act)*0.2
 max_episode_length = 200
 n_source_samples = [25000]*3
 n_target_samples = 5000
-n_action_bins = 10 + 1
+n_action_bins = 20 + 1
 n_position_bins = 20 + 1
 n_velocity_bins = 20 + 1
 
@@ -151,25 +151,21 @@ weights_est = MinMaxWeightsEstimator(gamma)
 '''xs = source_tasks[0].env.state_reps[:,0]
 ys = source_tasks[0].env.state_reps[:,1]
 target_task.env.set_policy(target_policy, gamma)
-source_tasks[0].env.set_policy(source_policies[0], gamma)
 for act in range(n_action_bins - 1):
-    zs = source_tasks[0].env.zeta_distr[:, act].flatten()
+    zs = target_task.env.Q[:, act].flatten()
     fig = plt.figure()
     ax = fig.add_subplot(111, projection='3d')
-    aux = int(source_tasks[0].env.state_reps.shape[0] / source_tasks[0].env.velocity_reps.shape[0])
+    aux = int(target_task.env.state_reps.shape[0] / target_task.env.velocity_reps.shape[0])
     sur = ax.plot_surface(xs.reshape((-1, aux)), ys.reshape((-1, aux)), zs.reshape((-1, aux)))
-    zs = target_task.env.zeta_distr[:, act].flatten()
-    fig = plt.figure()
-    ax = fig.add_subplot(111, projection='3d')
-    aux = int(source_tasks[0].env.state_reps.shape[0] / source_tasks[0].env.velocity_reps.shape[0])
-    sur = ax.plot_surface(xs.reshape((-1, aux)), ys.reshape((-1, aux)), zs.reshape((-1, aux)))
+zs = target_task.env.V.flatten()
+fig = plt.figure()
+ax = fig.add_subplot(111, projection='3d')
+aux = int(target_task.env.state_reps.shape[0] / target_task.env.velocity_reps.shape[0])
+sur = ax.plot_surface(xs.reshape((-1, aux)), ys.reshape((-1, aux)), zs.reshape((-1, aux)))
 plt.show()
 plt.close()'''
 
-'''epis = collect_episodes(source_task, 10000, max_episode_length, seed, source_policy, False)
-J1 = estimate_J(epis, gamma)
-samps = collect_samples(source_task, 1000*50, seed, source_policy)
-J2 = estimate_J(samps, gamma)'''
+#epis = collect_episodes(target_task, 10, max_episode_length, seed, target_policy, False)
 
 '''for i in range(len(source_tasks)):
     source_task = source_tasks[i]
@@ -210,21 +206,81 @@ Vs = lstd_v.fit(a, predict=True, weights=w*w4)
 grad = grad_est.estimate_gradient(a, target_policy, weights=w, Q=Qs, V=Vs)
 print(grad, g)'''
 
+'''xs = np.linspace(0., 1., 11)
+ys = np.linspace(0., 1., 11)
+Js = np.empty((4,11,11), dtype=np.float64)
+for x_idx, x in enumerate(xs):
+    for y_idx, y in enumerate(ys):
+        print(x, y)
+        pol = pf.create_policy(x, y)
+        source_tasks[0].env.set_policy(pol, gamma)
+        source_tasks[1].env.set_policy(pol, gamma)
+        source_tasks[2].env.set_policy(pol, gamma)
+        target_task.env.set_policy(pol, gamma)
+        Js[0,x_idx, y_idx] = source_tasks[0].env.J
+        Js[1,x_idx, y_idx] = source_tasks[1].env.J
+        Js[2,x_idx, y_idx] = source_tasks[2].env.J
+        Js[3,x_idx, y_idx] = target_task.env.J
+np.save('Js', Js)
+Js = np.load('Js.npy')
+xs, ys = np.meshgrid(xs, ys)
+zs = Js[0].T
+fig = plt.figure()
+ax = fig.add_subplot(111, projection='3d')
+sur = ax.plot_surface(xs, ys, zs)
+#plt.show()
+zs = Js[1].T
+fig = plt.figure()
+ax = fig.add_subplot(111, projection='3d')
+sur = ax.plot_surface(xs, ys, zs)
+#plt.show()
+zs = Js[2].T
+fig = plt.figure()
+ax = fig.add_subplot(111, projection='3d')
+sur = ax.plot_surface(xs, ys, zs)
+#plt.show()
+zs = Js[3].T
+fig = plt.figure()
+ax = fig.add_subplot(111, projection='3d')
+sur = ax.plot_surface(xs, ys, zs)
+plt.show()
+plt.close()'''
 
-target_sizes = list(range(1000, 10000, 1000)) + list(range(10000, 50000 + 1, 10000))
+
+
+target_sizes = [0] + list(range(1000, 10000, 1000)) + list(range(10000, 50000 + 1, 10000))
 n_runs = 10
 
-#weights_est = MinWeightsEstimator(gamma)
-out_stream = sys.stdout #open('IS_mm_full.log', 'w', buffering=1)
-learner = ISLearner(gamma, pf, lstd_q, lstd_v, grad_est, weights_est, True, True, True, seed)
-for i in [2, 1, 0]:
-    print("Task:", power_sources[i], file=out_stream)
-    results = learner.learn(target_task, target_sizes, n_runs, [source_tasks[i]], [source_policies[i]], [n_source_samples[i]], out_stream)
-    np.save('learning_app_IS_mm_full_' + str(i+1), np.array(results))
+if len(sys.argv) > 1:
+    start = int(sys.argv[1])
+    end = int(sys.argv[2])
+    for _ in range(start):
+        np.random.seed(seed)
+        seed = int(np.random.uniform(high=2**32))
+    n_runs = end - start
+    out_stream = open('IS_mm_full ' + '(' + str(start)+'-'+str(end)+').log', 'w', buffering=1)
+    learner = ISLearner(gamma, pf, lstd_q, lstd_v, grad_est, weights_est, True, True, True, seed)
+    for i in [1, 2, 0]:
+        print("Task:", power_sources[i], file=out_stream)
+        results = learner.learn(target_task, target_sizes, n_runs, [source_tasks[i]], [source_policies[i]], [n_source_samples[i]], out_stream)
+        np.save('learning_app_IS_mm_full_' + str(i + 1) + '('+str(start)+'-'+str(end)+')', np.array(results))
 
-print("All tasks", file=out_stream)
-results = learner.learn(target_task, target_sizes, n_runs, source_tasks, source_policies, n_source_samples, out_stream)
-np.save('learning_app_IS_mm_full_all', np.array(results))
+    print("All tasks", file=out_stream)
+    results = learner.learn(target_task, target_sizes, n_runs, source_tasks, source_policies, n_source_samples, out_stream)
+    np.save('learning_app_IS_mm_full_all'+'(' + str(start)+'-'+str(end)+')', np.array(results))
+else:
+    n_runs = 10
+    out_stream = open('IS_mm_actor.log', 'w', buffering=1)
+    learner = ISLearner(gamma, pf, lstd_q, lstd_v, grad_est, weights_est, False, False, True, seed)
+    for i in [1, 2, 0]:
+        print("Task:", power_sources[i], file=out_stream)
+        results = learner.learn(target_task, target_sizes, n_runs, [source_tasks[i]], [source_policies[i]], [n_source_samples[i]], out_stream)
+        np.save('learning_app_IS_mm_actor_' + str(i+1), np.array(results))
+
+    print("All tasks", file=out_stream)
+    results = learner.learn(target_task, target_sizes, n_runs, source_tasks, source_policies, n_source_samples, out_stream)
+    np.save('learning_app_IS_mm_actor_all', np.array(results))
+
 
 '''out_stream = sys.stdout# open('IS_test.log', 'w', buffering=1)
 target_sizes = [5000]
