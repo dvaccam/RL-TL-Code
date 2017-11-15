@@ -120,7 +120,7 @@ action_noise = (max_act - min_act)*0.2
 max_episode_length = 200
 n_source_samples = [25000]*3
 n_target_samples = 5000
-n_action_bins = 20 + 1
+n_action_bins = 10 + 1
 n_position_bins = 20 + 1
 n_velocity_bins = 20 + 1
 
@@ -142,9 +142,9 @@ source_policies = [pf.create_policy(alpha_1_sources[i], alpha_2_sources[i]) for 
 # Defining target policy
 target_policy = pf.create_policy(alpha_1_target, alpha_2_target)
 
-lstd_q = LSTD_Q_Estimator(4, 4, 2, 0.4, True, gamma, 0., min_pos, max_pos, target_task.env.min_speed, target_task.env.max_speed,
+lstd_q = LSTD_Q_Estimator(3, 3, 3, 0.4, True, gamma, 0., min_pos, max_pos, target_task.env.min_speed, target_task.env.max_speed,
                           min_act, max_act)
-lstd_v = LSTD_V_Estimator(6, 6, 0.2, True, gamma, 0., min_pos, max_pos, target_task.env.min_speed, target_task.env.max_speed)
+lstd_v = LSTD_V_Estimator(3, 3, 0.4, True, gamma, 0., min_pos, max_pos, target_task.env.min_speed, target_task.env.max_speed)
 grad_est = GradientEstimator(gamma=gamma, baseline_type=1)
 weights_est = MinMaxWeightsEstimator(gamma)
 
@@ -249,6 +249,7 @@ plt.close()'''
 
 
 target_sizes = [0] + list(range(1000, 10000, 1000)) + list(range(10000, 50000 + 1, 10000))
+target_sizes = list(range(1000, 10000, 1000)) + list(range(10000, 50000 + 1, 10000))
 n_runs = 10
 
 if len(sys.argv) > 1:
@@ -260,7 +261,7 @@ if len(sys.argv) > 1:
     n_runs = end - start
     out_stream = open('IS_mm_full ' + '(' + str(start)+'-'+str(end)+').log', 'w', buffering=1)
     learner = ISLearner(gamma, pf, lstd_q, lstd_v, grad_est, weights_est, True, True, True, seed)
-    for i in [1, 2, 0]:
+    for i in [2, 0]:
         print("Task:", power_sources[i], file=out_stream)
         results = learner.learn(target_task, target_sizes, n_runs, [source_tasks[i]], [source_policies[i]], [n_source_samples[i]], out_stream)
         np.save('learning_app_IS_mm_full_' + str(i + 1) + '('+str(start)+'-'+str(end)+')', np.array(results))
@@ -270,36 +271,37 @@ if len(sys.argv) > 1:
     np.save('learning_app_IS_mm_full_all'+'(' + str(start)+'-'+str(end)+')', np.array(results))
 else:
     n_runs = 10
-    out_stream = open('IS_mm_actor.log', 'w', buffering=1)
-    learner = ISLearner(gamma, pf, lstd_q, lstd_v, grad_est, weights_est, False, False, True, seed)
-    for i in [1, 2, 0]:
+    out_stream = sys.stdout#open('IS_m_actor.log', 'a', buffering=1)
+    #print("Min estimator, minimize only bias", file=out_stream)
+    weights_est = MinWeightsEstimator(gamma)
+    learner = ISLearner(gamma, pf, lstd_q, lstd_v, grad_est, weights_est, True, True, True, seed)
+    for i in [2, 1, 0]:
         print("Task:", power_sources[i], file=out_stream)
         results = learner.learn(target_task, target_sizes, n_runs, [source_tasks[i]], [source_policies[i]], [n_source_samples[i]], out_stream)
-        np.save('learning_app_IS_mm_actor_' + str(i+1), np.array(results))
+        np.save('learning_app_IS_m_actor_' + str(i+1), np.array(results))
 
     print("All tasks", file=out_stream)
     results = learner.learn(target_task, target_sizes, n_runs, source_tasks, source_policies, n_source_samples, out_stream)
-    np.save('learning_app_IS_mm_actor_all', np.array(results))
+    np.save('learning_app_IS_m_actor_all', np.array(results))
 
 
-'''out_stream = sys.stdout# open('IS_test.log', 'w', buffering=1)
-target_sizes = [5000]
+out_stream = open('IS_app_other.log', 'w', buffering=1)
+print("LSTDQ: 3x3x3x0.4, LSTDV 3x3x0.4", file=out_stream)
 learner = ISLearner(gamma, pf, lstd_q, lstd_v, grad_est, None, False, False, False, seed)
 for i in [2,1,0]:
     print("Task:", power_sources[i], file=out_stream)
     results = learner.learn(target_task, target_sizes, n_runs, [source_tasks[i]], [source_policies[i]], [n_source_samples[i]], out_stream)
-    #np.save('learning_app_IS_weird' + str(i+1), np.array(results))
+    np.save('learning_app_IS_other' + str(i+1), np.array(results))
 
 print("All tasks", file=out_stream)
 results = learner.learn(target_task, target_sizes, n_runs, source_tasks, source_policies, n_source_samples, out_stream)
-np.save('learning_app_IS_all', np.array(results))'''
+np.save('learning_app_IS_all_new', np.array(results))
 
-
-'''out_stream = open('Learning.log', 'w', buffering=1)
+'''out_stream = open('Learning_short.log', 'w', buffering=1)
 learner = ISLearner(gamma, pf, lstd_q, lstd_v, grad_est, None, False, False, False, seed)
 print("No tasks", file=out_stream)
 results = learner.learn(target_task, target_sizes, n_runs, None, None, None, out_stream)
-np.save('learning', np.array(results))'''
+np.save('learning_short', np.array(results))'''
 
 
 '''out_stream = open('Batch.log', 'w', buffering=1)

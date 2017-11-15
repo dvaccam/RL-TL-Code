@@ -334,7 +334,7 @@ class Continuous_MountainCarEnv(gym.Env):
             first_state = first_state.ravel()
             action = action.ravel()
             next_state = next_state.ravel()
-            reward = -(2.**(4.*np.abs(min(max(action[0], self.min_action), self.max_action))))
+            reward = -(2.**(4.*np.abs(min(max(action[0], self.min_action), self.max_action))))*0.1
             #energy = np.clip(np.abs((next_state[1] - first_state[1] + self.rescale(0.0025) * np.cos(3 * self.inverse_transform(first_state[0])))
             #                        / action),
             #                    0., self.max_energy)
@@ -348,12 +348,12 @@ class Continuous_MountainCarEnv(gym.Env):
             #if next_state[0] <= self.position_bins[1] and next_state[1] < 0:
             #    reward -= 10.
             if next_state[0] >= self.goal_position:
-                reward += 100.
+                reward += 100.*0.1
             if first_state[0] >= self.goal_position:
                 reward = 0.
             return reward
         elif first_state.ndim == 2 and action.ndim == 2 and next_state.ndim == 2:
-            rewards = -(2.**(4.*np.abs(np.clip(action.flatten(), self.min_action, self.max_action))))
+            rewards = -(2.**(4.*np.abs(np.clip(action.flatten(), self.min_action, self.max_action))))*0.1
             #energy = np.zeros(first_state.shape[0], dtype=np.float64)
             #mask_action = action.flatten() != 0.
             #energy[mask_action] = np.clip(np.abs((next_state[:,1] - first_state[:,1] +
@@ -369,7 +369,7 @@ class Continuous_MountainCarEnv(gym.Env):
             #mask = np.logical_and(next_state[:,0] <= self.position_bins[1], next_state[:,1] < 0)
             #rewards[mask] -= 10.
             mask_1 = next_state[:,0] >= self.goal_position
-            rewards[mask_1] += 100.
+            rewards[mask_1] += 100.*0.1
             mask_2 = first_state[:,0] >= self.goal_position
             rewards[mask_2] = 0.
             return rewards

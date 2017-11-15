@@ -368,18 +368,6 @@ class MinMaxWeightsEstimator():
 
                 self.source_samples[j]['rho_q'] = \
                     np.add.reduceat(all_phi_Q_rsp[state_sorted,action_sorted]*source_samples[j]['r'][sorted_idx,None], groups, axis=0)
-                self.zeta_rep[j] = np.repeat(source_tasks[j].env.zeta_distr[:,:,None],
-                                             source_tasks[j].env.Q.size,
-                                             axis=2).reshape(source_tasks[0].env.Q.shape + source_tasks[0].env.Q.shape)
-                self.p_rep[j] = np.repeat(source_tasks[j].env.transition_matrix[:,:,:,None],
-                                          source_tasks[j].env.Q.shape[1],
-                                          axis=3)
-                self.L_p_rep[j] = np.repeat(self.L_P_eps_s_a_s_prime[j][:, :, :, None],
-                                            source_tasks[j].env.Q.shape[1],
-                                            axis=3)
-                self.M_p_rep[j] = np.repeat(self.M_P_eps_s_a_s_prime[j][:, :, :, None],
-                                            source_tasks[j].env.Q.shape[1],
-                                            axis=3)
 
             if self.for_LSTDV:
                 groups = np.logical_or.reduce((state_groups, action_groups, next_state_groups))
@@ -573,7 +561,7 @@ class MinMaxWeightsEstimator():
             bias = np.abs(bias) + (self.delta_J * self.source_sizes.reshape((-1, 1))).sum(axis=0) / n
             bias = (bias**2).sum()
             vari = vari.sum()
-            return bias + vari
+            return bias# + vari
 
         def grad_g(w):
             bias = 0.
@@ -581,11 +569,13 @@ class MinMaxWeightsEstimator():
                 bias += (self.source_samples[j]['eta_j'] - w[reduced_w_idx[j]:reduced_w_idx[j + 1]].reshape((-1, 1)) * self.source_samples[j]['eta_1']).sum(axis=0) / (n*(1. - self.gamma))
             sum_etas = bias
             bias = np.abs(bias) + (self.delta_J * self.source_sizes.reshape((-1, 1))).sum(axis=0) / n
+            bias *= n
             grad = np.zeros(w.shape + (2,), dtype=np.float64)
             for j in range(self.m):
-                grad[reduced_w_idx[j]:reduced_w_idx[j+1]] = 2*self.source_samples[j]['eta_1']*(np.power(-1., sum_etas > 0) * bias / (1. - self.gamma) +
-                                                                                               self.source_samples[j]['eta_1'] *w[reduced_w_idx[j]:reduced_w_idx[j+1]][:,None] / (self.source_samples[j]['grp_szs_grad'][:,None]*(1. - self.gamma) ** 2) -
-                                                                                               (self.source_samples[j]['eta_1']*w[reduced_w_idx[j]:reduced_w_idx[j+1]][:,None]).sum(axis=0) / (self.source_sizes[j] * (1. - self.gamma) ** 2))\
+                grad[reduced_w_idx[j]:reduced_w_idx[j+1]] = 2*self.source_samples[j]['eta_1']*(np.power(-1., sum_etas > 0) * bias / (1. - self.gamma))/ n ** 2
+                grad[reduced_w_idx[j]:reduced_w_idx[j + 1]] += 2 * self.source_samples[j]['eta_1']*\
+                                                               (self.source_samples[j]['eta_1'] *w[reduced_w_idx[j]:reduced_w_idx[j+1]][:,None] / (self.source_samples[j]['grp_szs_grad'][:,None]*(1. - self.gamma) ** 2) -
+                                                                (self.source_samples[j]['eta_1']*w[reduced_w_idx[j]:reduced_w_idx[j+1]][:,None]).sum(axis=0) / (self.source_sizes[j] * (1. - self.gamma) ** 2))\
                                                             / n ** 2
             grad = grad.sum(axis=1)
             return grad
@@ -617,8 +607,7 @@ class MinMaxWeightsEstimator():
         sum_etas_A = np.zeros((self.n_features_q, self.n_features_q), dtype=np.float64)
         bias_b = np.zeros((self.n_features_q, self.n_features_q), dtype=np.float64)
         sum_etas_b = np.zeros((self.n_features_q, self.n_features_q), dtype=np.float64)
-        scale = 1e5
-        
+
         def g(w):
             nonlocal bias_A, bias_b
             bias_A = np.zeros((self.n_features_q, self.n_features_q), dtype=np.float64)
@@ -644,7 +633,7 @@ class MinMaxWeightsEstimator():
             bias_b = np.abs(bias_b) + init_bias_b
             bias_b_sq = (bias_b**2).sum()
             vari_b = vari_b.sum()
-            return (bias_A_sq + vari_A + bias_b_sq + vari_b)*scale
+            return bias_A_sq + vari_A + bias_b_sq + vari_b
 
         def grad_g(w):
             grad_A = np.zeros(w.shape + (self.n_features_q,self.n_features_q), dtype=np.float64)
@@ -663,7 +652,7 @@ class MinMaxWeightsEstimator():
                                                (self.source_samples[j]['rho_q'] * w[reduced_w_idx[j]:reduced_w_idx[j + 1]][:,None]).sum(axis=0) / self.source_sizes[j]) /\
                                               n ** 2
             grad = grad_A.sum(axis=(1,2)) + grad_b.sum(axis=1)
-            return grad*scale
+            return grad
 
         bounds = np.ones((self.l_bounds_lstdq.size + self.u_bounds_lstdq.size,), dtype=np.float64)
         bounds[0::2] = self.l_bounds_lstdq
@@ -718,7 +707,7 @@ class MinMaxWeightsEstimator():
             bias_b = np.abs(bias_b) + init_bias_b
             bias_b_sq = (bias_b ** 2).sum()
             vari_b = vari_b.sum()
-            return bias_A_sq + vari_A + bias_b_sq + vari_b
+            return bias_A_sq + bias_b_sq + vari_A + vari_b
 
         def grad_g(w):
             grad_A = np.zeros(w.shape + (self.n_features_v, self.n_features_v), dtype=np.float64)

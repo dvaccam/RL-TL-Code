@@ -16,7 +16,7 @@ class LSTD_V_Estimator:
         self.max_vel = max_vel
         self.pos_kernels = np.linspace(min_pos, max_pos, n_kernels_pos)
         self.vel_kernels = np.linspace(min_vel, max_vel, n_kernels_vel)
-        self.idx_grid = np.stack(np.meshgrid(np.arange(self.pos_kernels.shape[0]),
+        self.idx_grid = np.dstack(np.meshgrid(np.arange(self.pos_kernels.shape[0]),
                                              np.arange(self.vel_kernels.shape[0]),
                                              indexing='ij')).reshape((-1, 2))
         self.source_phi_s = None
@@ -36,7 +36,7 @@ class LSTD_V_Estimator:
         else:
             dists_p = (s[0] - self.pos_kernels) / (self.max_pos - self.min_pos)
             dists_v = (s[1] - self.vel_kernels) / (self.max_vel - self.min_vel)
-            dists = dists_p[self.idx_grid[:, 0]] ** 2 + dists_v[self.idx_grid[:, 1]]
+            dists = dists_p[self.idx_grid[:, 0]] ** 2 + dists_v[self.idx_grid[:, 1]] ** 2
             phi = np.exp(-dists / self.eps ** 2)
             if self.fit_bias:
                 phi = np.append(phi, 1.)
@@ -64,6 +64,21 @@ class LSTD_V_Estimator:
 
 
 
+
+    def produce_matrices(self, dataset):
+        first_states = dataset['fs']
+        next_states = dataset['ns']
+        phi_s = self.map_to_feature_space(first_states)
+        phi_ns = self.map_to_feature_space(next_states)
+        rewards = dataset['r']
+        delta_phi = phi_s - self.gamma * phi_ns
+        A = (phi_s / phi_s.shape[0]).T.dot(delta_phi)
+        b = phi_s * rewards.reshape((-1, 1))
+        b = b.mean(axis=0)
+        return A, b
+
+
+
     def fit(self, dataset, source_weights=None, predict=False):
         first_states = dataset['fs']
         next_states = dataset['ns']
@@ -80,11 +95,11 @@ class LSTD_V_Estimator:
         delta_phi = phi_s - self.gamma * phi_ns
         if source_weights is not None:
             delta_phi *= weights.reshape((-1, 1))
-        A = phi_s.T.dot(delta_phi)
+        A = (phi_s/phi_s.shape[0]).T.dot(delta_phi)
         b = phi_s * rewards.reshape((-1,1))
         if source_weights is not None:
             b *= weights.reshape((-1, 1))
-        b = b.sum(axis=0)
+        b = b.mean(axis=0)
         self.theta = sp.linalg.pinv2(A).dot(b)
         if predict:
             return phi_s.dot(self.theta)

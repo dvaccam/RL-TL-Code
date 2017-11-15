@@ -58,36 +58,6 @@ class LSTD_Q_Estimator:
             phi = np.exp(-dists / self.eps ** 2)
             if self.fit_bias:
                 phi = np.append(phi, 1.)
-        '''p1 = np.array([source_task.env.position_bins[0]])
-        p3 = np.array([source_task.env.position_bins[-1]])
-        p2 = np.array([(p3 + p1) / 2]).flatten()
-        v1 = np.array([source_task.env.velocity_bins[0]])
-        v3 = np.array([source_task.env.velocity_bins[-1]])
-        v2 = np.array([(v3 + v1) / 2]).flatten()
-        epsp = rescale_state(1.8 * 0.35) ** 2
-        epsv = rescale_state(.14 * 0.35) ** 2
-        if s.ndim == 2:
-            dp1 = s[:, 0] - p1
-            dp2 = s[:, 0] - p2
-            dp3 = s[:, 0] - p3
-            dv1 = s[:, 1] - v1
-            dv2 = s[:, 1] - v2
-            dv3 = s[:, 1] - v3
-            d = np.stack((np.exp(-dp1**2/epsp - dv1**2/epsv), np.exp(-dp1**2/epsp - dv2**2/epsv), np.exp(-dp1**2/epsp - dv3**2/epsv),
-                  np.exp(-dp2 ** 2 / epsp - dv1 ** 2 / epsv), np.exp(-dp2**2/epsp - dv3**2/epsv),
-                  np.exp(-dp3 ** 2 / epsp - dv2 ** 2 / epsv),np.exp(-dp3 ** 2 / epsp - dv3 ** 2 / epsv))).T
-            phi = np.hstack((d, np.ones((d.shape[0], 1), dtype=np.float64)))
-        else:
-            dp1 = np.abs(s[0] - p1)
-            dp2 = np.abs(s[0] - p2)
-            dp3 = np.abs(s[0] - p3)
-            dv1 = np.abs(s[1] - v1)
-            dv2 = np.abs(s[1] - v2)
-            dv3 = np.abs(s[1] - v3)
-            d = np.array([np.exp(-dp1**2/epsp - dv1**2/epsv), np.exp(-dp1**2/epsp - dv2**2/epsv), np.exp(-dp1**2/epsp - dv3**2/epsv),
-                  np.exp(-dp2 ** 2 / epsp - dv1 ** 2 / epsv), np.exp(-dp2**2/epsp - dv3**2/epsv),
-                  np.exp(-dp3 ** 2 / epsp - dv2 ** 2 / epsv),np.exp(-dp3 ** 2 / epsp - dv3 ** 2 / epsv)]).flatten()
-            phi = np.append(d, 1.)'''
         return phi
 
 
@@ -116,6 +86,22 @@ class LSTD_Q_Estimator:
 
 
 
+    def produce_matrices(self, dataset):
+        first_states = dataset['fs']
+        actions = dataset['a']
+        next_states = dataset['ns']
+        next_actions = dataset['na']
+        phi_sa = self.map_to_feature_space(first_states, actions)
+        phi_nsa = self.map_to_feature_space(next_states, next_actions)
+        rewards = dataset['r']
+        delta_phi = phi_sa - self.gamma * phi_nsa
+        A = (phi_sa / phi_sa.shape[0]).T.dot(delta_phi)
+        b = phi_sa * rewards.reshape((-1, 1))
+        b = b.mean(axis=0)
+        return A, b
+
+
+
     def fit(self, dataset, source_weights=None, predict=False): #Direct transfer works here because reward function is the same
         first_states = dataset['fs']
         actions = dataset['a']
@@ -134,11 +120,11 @@ class LSTD_Q_Estimator:
         delta_phi = phi_sa - self.gamma * phi_nsa
         if source_weights is not None:
             delta_phi *= weights.reshape((-1,1))
-        A = phi_sa.T.dot(delta_phi)
+        A = (phi_sa/phi_sa.shape[0]).T.dot(delta_phi)
         b = phi_sa * rewards.reshape((-1,1))
         if source_weights is not None:
             b *= weights.reshape((-1,1))
-        b = b.sum(axis=0)
+        b = b.mean(axis=0)
         self.theta = sp.linalg.pinv2(A).dot(b)
         if predict:
             return phi_sa.dot(self.theta)
