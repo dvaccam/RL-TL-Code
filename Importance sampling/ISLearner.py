@@ -1,12 +1,13 @@
 import numpy as np
 import sys
+from functools import reduce
 import time
 
 
 
 class ISLearner:
     def __init__(self, gamma, policy_factory, q_estimator, v_estimator, gradient_estimator, weights_estimator,
-                 app_w_critic_Q, app_w_critic_V, app_w_actor, seed):
+                 app_w_critic_Q, app_w_critic_V, app_w_actor, seed, init_source, init_target):
         self.gamma = gamma
         self.policy_factory = policy_factory
         self.q_estimator = q_estimator
@@ -20,25 +21,17 @@ class ISLearner:
             self.weights_estimator.set_flags(app_w_actor, app_w_critic_Q, app_w_critic_V)
         self.initial_seed = seed
         self.seed = seed
+        self.init_source = init_source
+        self.init_target = init_target
 
 
 
     def learn(self, target_task, n_target_samples, n_runs=1, source_tasks=None, source_policies=None, n_sources_samples=None,
-              out_stream=sys.stdout):
+              out_stream=sys.stdout, name=None):
         self.seed = self.initial_seed
         self.out_stream = out_stream
-        if self.q_estimator is not None and self.v_estimator is not None:
-            if source_tasks is not None:
-                print("Transfer app", file=self.out_stream)
-            else:
-                print("No transfer app", file=self.out_stream)
-        else:
-            if source_tasks is not None:
-                print("Transfer", file=self.out_stream)
-            else:
-                print("No transfer", file=self.out_stream)
 
-        results = np.zeros((n_runs, len(n_target_samples)), dtype=np.float64)
+        results = np.zeros((n_runs, len(n_target_samples), 2), dtype=np.float64)
         all_phi_Q = None
         all_phi_V = None
 
@@ -85,15 +78,18 @@ class ISLearner:
 
             for size_idx, target_size in enumerate(n_target_samples):
                 print("No. samples:", target_size, file=self.out_stream)
-                alpha_1_target_opt, alpha_2_target_opt =\
+                alpha_1_target_opt, alpha_2_target_opt, iters, ess_critic_v, ess_critic_q, ess_actor =\
                     self.optimize_policy_parameters(target_size, target_task,
                                                     source_samples, source_tasks, source_policies,
-                                                    source_samples_probs_zeta, source_samples_probs_p, source_samples_probs_pi,
-                                                    all_phi_Q)
+                                                    source_samples_probs_zeta, source_samples_probs_p, source_samples_probs_pi)
+                if source_samples is not None:
+                    np.save(name + '_ess_critic_v_' + str(run_idx + 1) + '_' + str(size_idx+1), ess_critic_v)
+                    np.save(name + '_ess_critic_q_' + str(run_idx + 1) + '_' + str(size_idx+1), ess_critic_q)
+                    np.save(name + '_ess_actor_' + str(run_idx + 1) + '_' + str(size_idx+1), ess_actor)
                 optimal_pi = self.policy_factory.create_policy(alpha_1_target_opt, alpha_2_target_opt)
                 target_task.env.set_policy(optimal_pi, self.gamma)
                 J1_opt = target_task.env.J
-                results[run_idx, size_idx] = J1_opt
+                results[run_idx, size_idx] = J1_opt, iters
                 print("Ended at:", [alpha_1_target_opt, alpha_2_target_opt], "J:", J1_opt, file=self.out_stream)
             self.gradient_estimator.clean_sources()
             if self.q_estimator is not None and self.v_estimator is not None:
@@ -107,19 +103,37 @@ class ISLearner:
 
 
     def optimize_policy_parameters(self, target_size, target_task, source_samples=None, source_tasks=None, source_policies=None,
-                                   source_sample_probs_zeta=None, source_sample_probs_p=None, source_sample_probs_pi=None,
-                                   all_phi_Q=None):
+                                   source_sample_probs_zeta=None, source_sample_probs_p=None, source_sample_probs_pi=None):
         step_size = 0.01
         max_iters = 2000
         iter = 1
         np.random.seed(self.seed)
         grad = np.zeros(2, dtype=np.float64)
         grad_norm = 1.
-        alpha1 = np.random.uniform()
-        alpha2 = np.random.uniform()
+        if self.init_target == 'r':
+            alpha1 = np.random.uniform()
+            alpha2 = np.random.uniform()
+        else:
+            closest = np.argmin(np.abs(np.array([st.env.power for st in source_tasks]) - target_task.env.power))
+            alpha1 = source_policies[closest].alpha1
+            alpha2 = source_policies[closest].alpha2
         print("Starting point:", [alpha1, alpha2], file=self.out_stream)
         weights_zeta = None
-        n_uses = 0
+        m = 0.
+        v = 0.
+        m_tilde = grad.copy()
+        v_tilde = grad.copy()
+        beta_1 = 0.9
+        beta_2 = 0.999
+        eps = 1e-8
+        if source_samples is not None:
+            ess_critic_v = np.empty(max_iters, dtype=np.float64)
+            ess_critic_q = np.empty(max_iters, dtype=np.float64)
+            ess_actor = np.empty(max_iters, dtype=np.float64)
+        else:
+            ess_critic_v = None
+            ess_critic_q = None
+            ess_actor = None
 
         while grad_norm > 1e-3 and iter <= max_iters:
             alpha1 += step_size * grad[0]
@@ -161,51 +175,42 @@ class ISLearner:
                         weights_p = np.concatenate(weights_p)
                         if not self.app_w_critic_Q:
                             weights_pi = np.concatenate(weights_pi)
-                    print("Critic")
-                    s = time.time()
                     if self.weights_estimator is not None and (self.app_w_critic_Q or self.app_w_critic_V):
-                        self.weights_estimator.prepare_lstd(pol, target_task.env.power)
-                    e = time.time()
-                    print(e-s)
-                    s = time.time()
+                        if target_size != 0:
+                            self.weights_estimator.prepare_lstd(pol, target_task.env.power)
                     if self.app_w_critic_Q:
-                        A_1, b_1 = self.q_estimator.produce_matrices(target_samples)
-                        weights_q = self.weights_estimator.estimate_weights_lstdq(target_size, A_1, b_1)
-                        #weights_q = self.weights_estimator.estimate_weights_lstdq(target_size)
+                        if target_size != 0:
+                            A_1, b_1 = self.q_estimator.produce_matrices(target_samples)
+                            weights_q = self.weights_estimator.estimate_weights_lstdq(target_size, A_1, b_1)
+                        else:
+                            weights_q = np.ones(transfer_samples['fs'].shape[0])
                     else:
                         weights_q = weights_zeta*weights_p*weights_pi
-                    e = time.time()
-                    print(e - s)
-                    s = time.time()
                     if self.app_w_critic_V:
-                        A_1, b_1 = self.v_estimator.produce_matrices(target_samples)
-                        weights_v = self.weights_estimator.estimate_weights_lstdv(target_size, A_1, b_1)
-                        #weights_v = self.weights_estimator.estimate_weights_lstdv(target_size)
+                        if target_size != 0:
+                            A_1, b_1 = self.v_estimator.produce_matrices(target_samples)
+                            weights_v = self.weights_estimator.estimate_weights_lstdv(target_size, A_1, b_1)
+                        else:
+                            weights_v = np.ones(transfer_samples['fs'].shape[0])
                     else:
                         weights_v = weights_zeta*weights_p
-                    e = time.time()
-                    print(e - s)
                     Qs = self.q_estimator.fit(target_samples, predict=True, source_weights=weights_q)
                     Vs = self.v_estimator.fit(target_samples, predict=True, source_weights=weights_v)
+                    ess_critic_v[iter-1] = (np.linalg.norm(weights_v, ord=1)/np.linalg.norm(weights_v))**2
+                    ess_critic_q[iter-1] = (np.linalg.norm(weights_q, ord=1)/np.linalg.norm(weights_q))**2
                 else:
                     Qs = target_task.env.Q[transfer_samples['fsi'], transfer_samples['ai']]
                     Vs = target_task.env.V[transfer_samples['fsi']]
                 # Actor
                 if self.app_w_actor:
-                    '''if self.q_estimator is not None:
-                        all_target_Q = self.q_estimator.predict(None, None, all_phi_Q).reshape(source_tasks[0].env.Q.shape)
+                    if target_size != 0:
+                        grad_J1 = self.gradient_estimator.estimate_gradient(target_samples, pol.log_gradient_matrix[target_samples['fsi'],
+                                                                                                                    target_samples['ai']],
+                                                                            Q=Qs[:target_size], V=Vs[:target_size])
+                        self.weights_estimator.prepare_gradient(pol, target_task.env.power, Qs[target_size:], Vs[target_size:])
+                        weights_zeta = self.weights_estimator.estimate_weights_gradient(target_size, grad_J1)
                     else:
-                        all_target_Q = target_task.env.Q
-                    self.weights_estimator.prepare_gradient(pol, target_task.env.power, all_target_Q, Vs[target_size:])
-                    weights_zeta = self.weights_estimator.estimate_weights_gradient(target_size)'''
-                    grad_J1 = self.gradient_estimator.estimate_gradient(target_samples, pol.log_gradient_matrix[target_samples['fsi'],
-                                                                                                                target_samples['ai']],
-                                                                        Q=Qs[:target_size], V=Vs[:target_size])
-                    self.weights_estimator.prepare_gradient(pol, target_task.env.power, Qs[target_size:], Vs[target_size:])
-                    weights_zeta = self.weights_estimator.estimate_weights_gradient(target_size, grad_J1)
-                    grad = self.gradient_estimator.estimate_gradient(target_samples, pol.log_gradient_matrix[transfer_samples['fsi'],
-                                                                                                             transfer_samples['ai']],
-                                                                     Q=Qs, V=Vs, source_weights=weights_zeta)
+                        weights_zeta = np.ones(transfer_samples['fs'].shape[0])
                 else:
                     if weights_zeta is None:
                         weights_zeta = []
@@ -214,12 +219,13 @@ class ISLearner:
                                                                                    target_task, source_policies[i], pol,
                                                                                    source_sample_probs_zeta[i]))
                         weights_zeta = np.concatenate(weights_zeta)
-                    grad = self.gradient_estimator.estimate_gradient(target_samples, pol.log_gradient_matrix[transfer_samples['fsi'],
-                                                                                                             transfer_samples['ai']],
-                                                                     Q=Qs, V=Vs, source_weights=weights_zeta)
+                grad = self.gradient_estimator.estimate_gradient(target_samples, pol.log_gradient_matrix[transfer_samples['fsi'],
+                                                                                                         transfer_samples['ai']],
+                                                                 Q=Qs, V=Vs, source_weights=weights_zeta)
+                ess_actor[iter-1] = (np.linalg.norm(weights_zeta, ord=1)/np.linalg.norm(weights_zeta))**2
             else:
                 if target_size == 0:
-                    return alpha1, alpha2
+                    break
                 if self.q_estimator is not None and self.v_estimator is not None:
                     Qs = self.q_estimator.fit(target_samples, predict=True)
                     Vs = self.v_estimator.fit(target_samples, predict=True)
@@ -232,21 +238,28 @@ class ISLearner:
             '''g = pol.log_gradient_matrix.copy()
             g = np.transpose(g, axes=(2, 0, 1)) * (target_task.env.Q * target_task.env.zeta_distr)
             g = np.transpose(g, axes=(1, 2, 0)).sum(axis=(0, 1))/(1. - self.gamma)
-            print(grad, g, alpha1, alpha2)'''
+            print(grad, g, alpha1, alpha2, target_task.env.J)'''
             grad *= np.array([(0 < alpha1 < 1) or ((alpha1 < 1 or grad[0] < 0) and (alpha1 > 0 or grad[0] > 0)),
                               (0 < alpha2 < 1) or ((alpha2 < 1 or grad[1] < 0) and (alpha2 > 0 or grad[1] > 0))])
+            m = beta_1*m + (1. - beta_1)*grad
+            v = beta_2*v + (1. - beta_2)*(grad**2)
+            m_tilde = m/(1. - beta_1**iter)
+            v_tilde = v/(1. - beta_2**iter)
+            grad = (m_tilde/(np.sqrt(v_tilde) + eps))
             grad_norm = np.linalg.norm(grad)
-            grad /= np.linalg.norm(grad, ord=np.inf) if grad_norm != 0. else 1.
             if iter % 40 == 0:
                 print(iter)
                 sys.stdout.flush()
             iter += 1
             step_size -= (0.01 - 0.001) / max_iters
             weights_zeta = None
-        print(n_uses, iter, file=self.out_stream)
+        print("Finished at", iter-1, "iterations", file=self.out_stream)
         if iter > max_iters:
-            print("Did not converge;",grad_norm,iter, file=self.out_stream)
-        return alpha1, alpha2
+            print("Did not converge;",grad_norm, file=self.out_stream)
+        if source_tasks is not None:
+            return alpha1, alpha2, iter - 1, ess_critic_v[:iter-1], ess_critic_q[:iter-1], ess_actor[:iter-1]
+        else:
+            return alpha1, alpha2, iter - 1, None, None, None
 
 
 

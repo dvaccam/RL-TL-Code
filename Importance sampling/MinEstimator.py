@@ -484,7 +484,6 @@ class MinWeightsEstimator():
     def prepare_lstd(self, target_policy, target_power):
         w_idx = np.hstack((0., self.source_sizes)).cumsum().astype(np.int64)
         for i in range(self.m):
-            s = time.time()
             self.delta_P_eps_theta_s_s_prime[i] = \
                 (self.source_tasks[i].env.transition_matrix * np.abs(self.source_policies[i].choice_matrix - target_policy.choice_matrix)[:, :, None] +
                  target_policy.choice_matrix[:, :, None] *
@@ -495,8 +494,6 @@ class MinWeightsEstimator():
             self.delta_zeta[i] = \
                 self.source_tasks[i].env.delta_distr[:, None] * np.abs(self.source_policies[i].choice_matrix - target_policy.choice_matrix) + \
                 target_policy.choice_matrix * np.clip(self.delta_delta[i], 0., 1.)[:, None]
-            e = time.time()
-            print(e - s)
             if self.for_LSTDV or self.for_LSTDQ:
                 self.M_P_eps_s_a_s_prime[i] = np.clip(self.source_tasks[i].env.transition_matrix +
                                                       self.L_P_eps_s_a_s_prime[i] * np.abs(self.source_tasks[i].env.power - target_power), 0., 1.)
@@ -608,11 +605,11 @@ class MinWeightsEstimator():
                 bias += self.source_sizes[j] * (target_grad -
                                                 (w[reduced_w_idx[j]:reduced_w_idx[j + 1]][:,None] * self.source_samples[j]['eta_1']).sum(axis=0) /
                                                 (self.source_sizes[j] * (1. - self.gamma))) / n
-                #vari += ((((w[reduced_w_idx[j]:reduced_w_idx[j + 1]][:, None] * self.source_samples[j]['eta_1']) ** 2) / self.source_samples[j]['grp_szs_grad'][:,None]).sum(axis=0) -
-                #         ((w[reduced_w_idx[j]:reduced_w_idx[j + 1]][:, None] * self.source_samples[j]['eta_1']).sum(axis=0)) ** 2 / self.source_sizes[j]) / (n * (1. - self.gamma)) ** 2
+                vari += ((((w[reduced_w_idx[j]:reduced_w_idx[j + 1]][:, None] * self.source_samples[j]['eta_1']) ** 2) / self.source_samples[j]['grp_szs_grad'][:,None]).sum(axis=0) -
+                         ((w[reduced_w_idx[j]:reduced_w_idx[j + 1]][:, None] * self.source_samples[j]['eta_1']).sum(axis=0)) ** 2 / self.source_sizes[j]) / (n * (1. - self.gamma)) ** 2
             bias_sq = (bias ** 2).sum()
-            #vari = vari.sum()
-            return bias_sq# + vari
+            vari = vari.sum()
+            return bias_sq + vari
 
         def grad_g(w):
             bias_n = bias*n
@@ -620,10 +617,10 @@ class MinWeightsEstimator():
             for j in range(self.m):
                 grad[reduced_w_idx[j]:reduced_w_idx[j + 1]] = \
                     2 * self.source_samples[j]['eta_1'] * (-bias_n / (1. - self.gamma))/n**2
-                #grad[reduced_w_idx[j]:reduced_w_idx[j + 1]] +=\
-                #    2 * self.source_samples[j]['eta_1'] *(self.source_samples[j]['eta_1'] * w[reduced_w_idx[j]:reduced_w_idx[j + 1]][:,None] / (self.source_samples[j]['grp_szs_grad'][:,None]*(1. - self.gamma) ** 2) -
-                #                                          (self.source_samples[j]['eta_1'] * w[reduced_w_idx[j]:reduced_w_idx[j + 1]][:,None]).sum() / (self.source_sizes[j] * (1. - self.gamma) ** 2))\
-                #    / n ** 2
+                grad[reduced_w_idx[j]:reduced_w_idx[j + 1]] +=\
+                    2 * self.source_samples[j]['eta_1'] *(self.source_samples[j]['eta_1'] * w[reduced_w_idx[j]:reduced_w_idx[j + 1]][:,None] / (self.source_samples[j]['grp_szs_grad'][:,None]*(1. - self.gamma) ** 2) -
+                                                          (self.source_samples[j]['eta_1'] * w[reduced_w_idx[j]:reduced_w_idx[j + 1]][:,None]).sum() / (self.source_sizes[j] * (1. - self.gamma) ** 2))\
+                    / n ** 2
             grad = grad.sum(axis=1)
             return grad
 
@@ -663,21 +660,21 @@ class MinWeightsEstimator():
                                                 (w[reduced_w_idx[j]:reduced_w_idx[j + 1]][:, None, None]*self.source_samples[j]['var_phi_q']).sum(axis=0)/
                                                 self.source_sizes[j])\
                           / n
-                #vari_A += (((w[reduced_w_idx[j]:reduced_w_idx[j + 1]] ** 2 / self.source_samples[j]['grp_szs_q'])[:, None, None] * self.source_samples[j]['var_phi_q_sq']).sum(axis=0) -
-                #           (w[reduced_w_idx[j]:reduced_w_idx[j + 1]][:, None, None] * self.source_samples[j]['var_phi_q']).sum(axis=0) ** 2 / self.source_sizes[j]) \
-                #          / n ** 2
+                vari_A += (((w[reduced_w_idx[j]:reduced_w_idx[j + 1]] ** 2 / self.source_samples[j]['grp_szs_q'])[:, None, None] * self.source_samples[j]['var_phi_q_sq']).sum(axis=0) -
+                           (w[reduced_w_idx[j]:reduced_w_idx[j + 1]][:, None, None] * self.source_samples[j]['var_phi_q']).sum(axis=0) ** 2 / self.source_sizes[j]) \
+                          / n ** 2
                 bias_b += self.source_sizes[j]*(target_b -
                                                 (w[reduced_w_idx[j]:reduced_w_idx[j + 1]][:, None]*self.source_samples[j]['rho_q']).sum(axis=0)/
                                                 self.source_sizes[j])\
                           / n
-                #vari_b += (((w[reduced_w_idx[j]:reduced_w_idx[j + 1]] ** 2 / self.source_samples[j]['grp_szs_q'])[:, None] * self.source_samples[j]['rho_q'] ** 2).sum(axis=0) -
-                #           (w[reduced_w_idx[j]:reduced_w_idx[j + 1]][:, None] * self.source_samples[j]['rho_q']).sum(axis=0) ** 2 / self.source_sizes[j]) \
-                #          / n ** 2
+                vari_b += (((w[reduced_w_idx[j]:reduced_w_idx[j + 1]] ** 2 / self.source_samples[j]['grp_szs_q'])[:, None] * self.source_samples[j]['rho_q'] ** 2).sum(axis=0) -
+                           (w[reduced_w_idx[j]:reduced_w_idx[j + 1]][:, None] * self.source_samples[j]['rho_q']).sum(axis=0) ** 2 / self.source_sizes[j]) \
+                          / n ** 2
             bias_A_sq = (bias_A ** 2).sum()
-            #vari_A = vari_A.sum()
+            vari_A = vari_A.sum()
             bias_b_sq = (bias_b ** 2).sum()
-            #vari_b = vari_b.sum()
-            return bias_A_sq + bias_b_sq# + vari_A + vari_b
+            vari_b = vari_b.sum()
+            return bias_A_sq + bias_b_sq + vari_A + vari_b
 
         def grad_g(w):
             grad_A = np.zeros(w.shape + (self.n_features_q, self.n_features_q), dtype=np.float64)
@@ -686,16 +683,16 @@ class MinWeightsEstimator():
             bias_b_n = bias_b*n
             for j in range(self.m):
                 grad_A[reduced_w_idx[j]:reduced_w_idx[j + 1]] = (2 * self.source_samples[j]['var_phi_q']/n**2) * -bias_A_n
-                #grad_A[reduced_w_idx[j]:reduced_w_idx[j + 1]] += (2 * self.source_samples[j]['var_phi_q'] / n ** 2) * \
-                #                                                 (self.source_samples[j]['var_phi_q'] * (w[reduced_w_idx[j]:reduced_w_idx[j + 1]] / self.source_samples[j]['grp_szs_q'])[:, None, None] -
-                #                                                 (self.source_samples[j]['var_phi_q'] * w[reduced_w_idx[j]:reduced_w_idx[j + 1]][:, None, None]).sum(axis=0) / self.source_sizes[j])
-                # grad_A[reduced_w_idx[j]:reduced_w_idx[j + 1]] = (2 * self.source_samples[j]['var_phi_q']/n**2) * -bias_A_n
-                # grad_A[reduced_w_idx[j]:reduced_w_idx[j + 1]] += (2 * self.source_samples[j]['var_phi_q']/n**2)*self.source_samples[j]['var_phi_q'] * (w[reduced_w_idx[j]:reduced_w_idx[j + 1]]/self.source_samples[j]['grp_szs_q'])[:,None,None]
-                # grad_A[reduced_w_idx[j]:reduced_w_idx[j + 1]] -= (2 * self.source_samples[j]['var_phi_q']/n**2)*(self.source_samples[j]['var_phi_q'] * w[reduced_w_idx[j]:reduced_w_idx[j + 1]][:,None,None]).sum(axis=0) / self.source_sizes[j]
+                grad_A[reduced_w_idx[j]:reduced_w_idx[j + 1]] += (2 * self.source_samples[j]['var_phi_q'] / n ** 2) * \
+                                                                 (self.source_samples[j]['var_phi_q'] * (w[reduced_w_idx[j]:reduced_w_idx[j + 1]] / self.source_samples[j]['grp_szs_q'])[:, None, None] -
+                                                                 (self.source_samples[j]['var_phi_q'] * w[reduced_w_idx[j]:reduced_w_idx[j + 1]][:, None, None]).sum(axis=0) / self.source_sizes[j])
+                #grad_A[reduced_w_idx[j]:reduced_w_idx[j + 1]] = (2 * self.source_samples[j]['var_phi_q']/n**2) * -bias_A_n
+                #grad_A[reduced_w_idx[j]:reduced_w_idx[j + 1]] += (2 * self.source_samples[j]['var_phi_q']/n**2)*self.source_samples[j]['var_phi_q'] * (w[reduced_w_idx[j]:reduced_w_idx[j + 1]]/self.source_samples[j]['grp_szs_q'])[:,None,None]
+                #grad_A[reduced_w_idx[j]:reduced_w_idx[j + 1]] -= (2 * self.source_samples[j]['var_phi_q']/n**2)*(self.source_samples[j]['var_phi_q'] * w[reduced_w_idx[j]:reduced_w_idx[j + 1]][:,None,None]).sum(axis=0) / self.source_sizes[j]
                 grad_b[reduced_w_idx[j]:reduced_w_idx[j + 1]] = (2 * self.source_samples[j]['rho_q']/n**2) * - bias_b_n
-                #grad_b[reduced_w_idx[j]:reduced_w_idx[j + 1]] += (2 * self.source_samples[j]['rho_q'] / n ** 2) *\
-                #                                                 (self.source_samples[j]['rho_q'] * (w[reduced_w_idx[j]:reduced_w_idx[j + 1]] / self.source_samples[j]['grp_szs_q'])[:, None] -
-                #                                                 (self.source_samples[j]['rho_q'] * w[reduced_w_idx[j]:reduced_w_idx[j + 1]][:, None]).sum(axis=0) / self.source_sizes[j])
+                grad_b[reduced_w_idx[j]:reduced_w_idx[j + 1]] += (2 * self.source_samples[j]['rho_q'] / n ** 2) *\
+                                                                 (self.source_samples[j]['rho_q'] * (w[reduced_w_idx[j]:reduced_w_idx[j + 1]] / self.source_samples[j]['grp_szs_q'])[:, None] -
+                                                                 (self.source_samples[j]['rho_q'] * w[reduced_w_idx[j]:reduced_w_idx[j + 1]][:, None]).sum(axis=0) / self.source_sizes[j])
             grad = grad_A.sum(axis=(1, 2)) + grad_b.sum(axis=1)
             return grad
 
@@ -734,21 +731,21 @@ class MinWeightsEstimator():
                                                   (w[reduced_w_idx[j]:reduced_w_idx[j + 1]][:, None, None] * self.source_samples[j]['var_phi_v']).sum(axis=0) /
                                                   self.source_sizes[j]) \
                           / n
-                #vari_A += (((w[reduced_w_idx[j]:reduced_w_idx[j + 1]] ** 2 / self.source_samples[j]['grp_szs_v'])[:, None, None] * self.source_samples[j]['var_phi_v_sq']).sum(axis=0) -
-                #           (w[reduced_w_idx[j]:reduced_w_idx[j + 1]][:, None, None] * self.source_samples[j]['var_phi_v']).sum(axis=0) ** 2 / self.source_sizes[j]) \
-                #          / n ** 2
+                vari_A += (((w[reduced_w_idx[j]:reduced_w_idx[j + 1]] ** 2 / self.source_samples[j]['grp_szs_v'])[:, None, None] * self.source_samples[j]['var_phi_v_sq']).sum(axis=0) -
+                           (w[reduced_w_idx[j]:reduced_w_idx[j + 1]][:, None, None] * self.source_samples[j]['var_phi_v']).sum(axis=0) ** 2 / self.source_sizes[j]) \
+                          / n ** 2
                 bias_b += self.source_sizes[j] * (target_b -
                                                   (w[reduced_w_idx[j]:reduced_w_idx[j + 1]][:, None] * self.source_samples[j]['rho_v']).sum(axis=0) /
                                                   self.source_sizes[j]) \
                           / n
-                #vari_b += (((w[reduced_w_idx[j]:reduced_w_idx[j + 1]] ** 2 / self.source_samples[j]['grp_szs_v'])[:, None] * self.source_samples[j]['rho_v'] ** 2).sum(axis=0) -
-                #           (w[reduced_w_idx[j]:reduced_w_idx[j + 1]][:, None] * self.source_samples[j]['rho_v']).sum(axis=0) ** 2 / self.source_sizes[j]) \
-                #          / n ** 2
+                vari_b += (((w[reduced_w_idx[j]:reduced_w_idx[j + 1]] ** 2 / self.source_samples[j]['grp_szs_v'])[:, None] * self.source_samples[j]['rho_v'] ** 2).sum(axis=0) -
+                           (w[reduced_w_idx[j]:reduced_w_idx[j + 1]][:, None] * self.source_samples[j]['rho_v']).sum(axis=0) ** 2 / self.source_sizes[j]) \
+                          / n ** 2
             bias_A_sv = (bias_A ** 2).sum()
-            #vari_A = vari_A.sum()
+            vari_A = vari_A.sum()
             bias_b_sv = (bias_b ** 2).sum()
-            #vari_b = vari_b.sum()
-            return bias_A_sv + bias_b_sv# + vari_A + vari_b
+            vari_b = vari_b.sum()
+            return bias_A_sv + bias_b_sv + vari_A + vari_b
 
         def grad_g(w):
             grad_A = np.zeros(w.shape + (self.n_features_v, self.n_features_v), dtype=np.float64)
@@ -757,16 +754,16 @@ class MinWeightsEstimator():
             bias_b_n = bias_b * n
             for j in range(self.m):
                 grad_A[reduced_w_idx[j]:reduced_w_idx[j + 1]] = (2 * self.source_samples[j]['var_phi_v'] / n ** 2) * -bias_A_n
-                #grad_A[reduced_w_idx[j]:reduced_w_idx[j + 1]] += (2 * self.source_samples[j]['var_phi_v'] / n ** 2) * \
-                #                                                 (self.source_samples[j]['var_phi_v'] * (w[reduced_w_idx[j]:reduced_w_idx[j + 1]] / self.source_samples[j]['grp_szs_v'])[:, None, None] -
-                #                                                  (self.source_samples[j]['var_phi_v'] * w[reduced_w_idx[j]:reduced_w_idx[j + 1]][:, None, None]).sum(axis=0) / self.source_sizes[j])
+                grad_A[reduced_w_idx[j]:reduced_w_idx[j + 1]] += (2 * self.source_samples[j]['var_phi_v'] / n ** 2) * \
+                                                                 (self.source_samples[j]['var_phi_v'] * (w[reduced_w_idx[j]:reduced_w_idx[j + 1]] / self.source_samples[j]['grp_szs_v'])[:, None, None] -
+                                                                  (self.source_samples[j]['var_phi_v'] * w[reduced_w_idx[j]:reduced_w_idx[j + 1]][:, None, None]).sum(axis=0) / self.source_sizes[j])
                 # grad_A[reduced_w_idx[j]:reduced_w_idx[j + 1]] = (2 * self.source_samples[j]['var_phi_v']/n**2) * -bias_A_n
                 # grad_A[reduced_w_idx[j]:reduced_w_idx[j + 1]] += (2 * self.source_samples[j]['var_phi_v']/n**2)*self.source_samples[j]['var_phi_v'] * (w[reduced_w_idx[j]:reduced_w_idx[j + 1]]/self.source_samples[j]['grp_szs_v'])[:,None,None]
                 # grad_A[reduced_w_idx[j]:reduced_w_idx[j + 1]] -= (2 * self.source_samples[j]['var_phi_v']/n**2)*(self.source_samples[j]['var_phi_v'] * w[reduced_w_idx[j]:reduced_w_idx[j + 1]][:,None,None]).sum(axis=0) / self.source_sizes[j]
                 grad_b[reduced_w_idx[j]:reduced_w_idx[j + 1]] = (2 * self.source_samples[j]['rho_v'] / n ** 2) * - bias_b_n
-                #grad_b[reduced_w_idx[j]:reduced_w_idx[j + 1]] += (2 * self.source_samples[j]['rho_v'] / n ** 2) * \
-                #                                                 (self.source_samples[j]['rho_v'] * (w[reduced_w_idx[j]:reduced_w_idx[j + 1]] / self.source_samples[j]['grp_szs_v'])[:, None] -
-                #                                                  (self.source_samples[j]['rho_v'] * w[reduced_w_idx[j]:reduced_w_idx[j + 1]][:, None]).sum(axis=0) / self.source_sizes[j])
+                grad_b[reduced_w_idx[j]:reduced_w_idx[j + 1]] += (2 * self.source_samples[j]['rho_v'] / n ** 2) * \
+                                                                 (self.source_samples[j]['rho_v'] * (w[reduced_w_idx[j]:reduced_w_idx[j + 1]] / self.source_samples[j]['grp_szs_v'])[:, None] -
+                                                                  (self.source_samples[j]['rho_v'] * w[reduced_w_idx[j]:reduced_w_idx[j + 1]][:, None]).sum(axis=0) / self.source_sizes[j])
             grad = grad_A.sum(axis=(1, 2)) + grad_b.sum(axis=1)
             return grad
 

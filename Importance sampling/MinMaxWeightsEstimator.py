@@ -561,7 +561,7 @@ class MinMaxWeightsEstimator():
             bias = np.abs(bias) + (self.delta_J * self.source_sizes.reshape((-1, 1))).sum(axis=0) / n
             bias = (bias**2).sum()
             vari = vari.sum()
-            return bias# + vari
+            return bias + vari
 
         def grad_g(w):
             bias = 0.

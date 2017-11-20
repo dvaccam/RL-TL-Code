@@ -1,12 +1,10 @@
-import subprocess
 import gym
 import numpy as np
-import math
 import time
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
 from matplotlib import cm
-from PolicyFactoryMC import PolicyFactoryMC, PolicyMC
+from PolicyFactoryMC import PolicyFactoryMC
 from LSTD_Q_Estimator import LSTD_Q_Estimator
 from LSTD_V_Estimator import LSTD_V_Estimator
 from GradientEstimator import GradientEstimator
@@ -20,6 +18,8 @@ from multiprocessing.dummy import Pool
 import copy
 import threading as thr
 import sys
+from itertools import compress
+from functools import reduce
 
 
 
@@ -110,15 +110,22 @@ max_pos = 10.
 min_act = -1.0
 max_act = -min_act
 seed = 9876
-power_sources = [rescale_state(0.07), rescale_state(1e-5), rescale_state(0.0025)]
+power_sources = [rescale_state(0.0025), rescale_state(0.0015),
+                 rescale_state(0.007), rescale_state(0.0007),
+                 rescale_state(0.07), rescale_state(1e-5)]
+#power_sources = [rescale_state(0.007)]
 power_target = rescale_state(0.002)
-alpha_1_sources = [0., 0., 0.]
-alpha_2_sources = [0., 0., 0.]
+alpha_1_sources = [0.]*len(power_sources)
+alpha_2_sources = [1.]*len(power_sources)
+alpha_1_sources_opt = [0.63, 0.45, 0.76, 0.22, 0.46, 0.]
+#alpha_1_sources_opt = [0.76]
+alpha_2_sources_opt = [0.16, 0.1, 0.13, 0.04, 0., 0.]
+#alpha_2_sources_opt = [0.13]
 alpha_1_target = 0.5
 alpha_2_target = 0.1
 action_noise = (max_act - min_act)*0.2
 max_episode_length = 200
-n_source_samples = [25000]*3
+n_source_samples = [25000]*len(power_sources)
 n_target_samples = 5000
 n_action_bins = 10 + 1
 n_position_bins = 20 + 1
@@ -137,8 +144,9 @@ target_task = gym.make('MountainCarContinuous-v0', min_position=min_pos, max_pos
 pf = PolicyFactoryMC(model='S', action_noise=action_noise, max_speed=target_task.env.max_speed, min_act=min_act, max_act=max_act,
                      action_bins=target_task.env.action_bins, action_reps=target_task.env.action_reps,
                      state_reps=target_task.env.state_reps, state_to_idx=target_task.env.state_to_idx)
-# Defining source policy
-source_policies = [pf.create_policy(alpha_1_sources[i], alpha_2_sources[i]) for i in range(len(alpha_1_sources))]
+# Defining source policies
+source_policies_rand = [pf.create_policy(alpha_1_sources[i], alpha_2_sources[i]) for i in range(len(alpha_1_sources))]
+source_policies_opt = [pf.create_policy(alpha_1_sources_opt[i], alpha_2_sources_opt[i]) for i in range(len(alpha_1_sources_opt))]
 # Defining target policy
 target_policy = pf.create_policy(alpha_1_target, alpha_2_target)
 
@@ -146,69 +154,13 @@ lstd_q = LSTD_Q_Estimator(3, 3, 3, 0.4, True, gamma, 0., min_pos, max_pos, targe
                           min_act, max_act)
 lstd_v = LSTD_V_Estimator(3, 3, 0.4, True, gamma, 0., min_pos, max_pos, target_task.env.min_speed, target_task.env.max_speed)
 grad_est = GradientEstimator(gamma=gamma, baseline_type=1)
-weights_est = MinMaxWeightsEstimator(gamma)
-
-'''xs = source_tasks[0].env.state_reps[:,0]
-ys = source_tasks[0].env.state_reps[:,1]
-target_task.env.set_policy(target_policy, gamma)
-for act in range(n_action_bins - 1):
-    zs = target_task.env.Q[:, act].flatten()
-    fig = plt.figure()
-    ax = fig.add_subplot(111, projection='3d')
-    aux = int(target_task.env.state_reps.shape[0] / target_task.env.velocity_reps.shape[0])
-    sur = ax.plot_surface(xs.reshape((-1, aux)), ys.reshape((-1, aux)), zs.reshape((-1, aux)))
-zs = target_task.env.V.flatten()
-fig = plt.figure()
-ax = fig.add_subplot(111, projection='3d')
-aux = int(target_task.env.state_reps.shape[0] / target_task.env.velocity_reps.shape[0])
-sur = ax.plot_surface(xs.reshape((-1, aux)), ys.reshape((-1, aux)), zs.reshape((-1, aux)))
-plt.show()
-plt.close()'''
+weights_est = MinWeightsEstimator(gamma)
 
 #epis = collect_episodes(target_task, 10, max_episode_length, seed, target_policy, False)
 
-'''for i in range(len(source_tasks)):
-    source_task = source_tasks[i]
-    source_task.env.set_policy(pf.create_policy(0., 0.), gamma)
-    a1 = source_task.env.J
-    source_task.env.set_policy(pf.create_policy(1., 0.), gamma)
-    a2 = source_task.env.J
-    source_task.env.set_policy(pf.create_policy(1., 1.), gamma)
-    a3 = source_task.env.J
-    source_task.env.set_policy(pf.create_policy(0., 1.), gamma)
-    a4 = source_task.env.J
-    source_task.env.set_policy(pf.create_policy(.5, .5), gamma)
-    a5 = source_task.env.J
-    print(power_sources[i], a1, a2, a3, a4, a5)
-
-target_task.env.set_policy(pf.create_policy(0., 0.), gamma)
-b1 = target_task.env.J
-target_task.env.set_policy(pf.create_policy(1., 0.), gamma)
-b2 = target_task.env.J
-target_task.env.set_policy(pf.create_policy(1., 1.), gamma)
-b3 = target_task.env.J
-target_task.env.set_policy(pf.create_policy(0., 1.), gamma)
-b4 = target_task.env.J
-target_task.env.set_policy(pf.create_policy(.5, .5), gamma)
-b5 = target_task.env.J
-print(b1, b2, b3, b4, b5)'''
-
-'''learner = ISLearner(gamma, pf, lstd_q, lstd_v, grad_est, seed)
-a = learner.collect_samples(source_tasks[2], n_source_samples[2], source_policies[2])
-w = learner.calculate_density_ratios_zeta(a, source_tasks[2], target_task, source_policies[2], target_policy)
-w4 = learner.calculate_density_ratios_transition(a, source_tasks[2], target_task, source_policies[2], target_policy)
-w5 = learner.calculate_density_ratios_policy(a, source_tasks[2], target_task, source_policies[2], target_policy)
-g = target_policy.log_gradient_matrix.copy()
-g = np.transpose(g, axes=(2, 0, 1)) * (target_task.env.Q * target_task.env.zeta_distr)
-g = np.transpose(g, axes=(1, 2, 0)).sum(axis=(0, 1))/(1. - gamma)
-Qs = lstd_q.fit(a, predict=True, weights=w*w4*w5)
-Vs = lstd_v.fit(a, predict=True, weights=w*w4)
-grad = grad_est.estimate_gradient(a, target_policy, weights=w, Q=Qs, V=Vs)
-print(grad, g)'''
-
 '''xs = np.linspace(0., 1., 11)
 ys = np.linspace(0., 1., 11)
-Js = np.empty((4,11,11), dtype=np.float64)
+Js = np.empty((7,11,11), dtype=np.float64)
 for x_idx, x in enumerate(xs):
     for y_idx, y in enumerate(ys):
         print(x, y)
@@ -216,101 +168,87 @@ for x_idx, x in enumerate(xs):
         source_tasks[0].env.set_policy(pol, gamma)
         source_tasks[1].env.set_policy(pol, gamma)
         source_tasks[2].env.set_policy(pol, gamma)
+        source_tasks[3].env.set_policy(pol, gamma)
+        source_tasks[4].env.set_policy(pol, gamma)
+        source_tasks[5].env.set_policy(pol, gamma)
         target_task.env.set_policy(pol, gamma)
         Js[0,x_idx, y_idx] = source_tasks[0].env.J
         Js[1,x_idx, y_idx] = source_tasks[1].env.J
         Js[2,x_idx, y_idx] = source_tasks[2].env.J
-        Js[3,x_idx, y_idx] = target_task.env.J
+        Js[3,x_idx, y_idx] = source_tasks[3].env.J
+        Js[4,x_idx, y_idx] = source_tasks[4].env.J
+        Js[5,x_idx, y_idx] = source_tasks[5].env.J
+        Js[6,x_idx, y_idx] = target_task.env.J
 np.save('Js', Js)
 Js = np.load('Js.npy')
 xs, ys = np.meshgrid(xs, ys)
-zs = Js[0].T
-fig = plt.figure()
-ax = fig.add_subplot(111, projection='3d')
-sur = ax.plot_surface(xs, ys, zs)
-#plt.show()
-zs = Js[1].T
-fig = plt.figure()
-ax = fig.add_subplot(111, projection='3d')
-sur = ax.plot_surface(xs, ys, zs)
-#plt.show()
-zs = Js[2].T
-fig = plt.figure()
-ax = fig.add_subplot(111, projection='3d')
-sur = ax.plot_surface(xs, ys, zs)
-#plt.show()
-zs = Js[3].T
-fig = plt.figure()
-ax = fig.add_subplot(111, projection='3d')
-sur = ax.plot_surface(xs, ys, zs)
+for i in range(len(source_tasks)+1):
+    zs = Js[i].T
+    fig = plt.figure()
+    ax = fig.add_subplot(111, projection='3d')
+    sur = ax.plot_surface(xs, ys, zs)
 plt.show()
 plt.close()'''
 
 
+target_sizes = [0] + list(range(100, 1000, 100)) + list(range(1000, 10000+1, 1000))
+target_sizes = [0,10]
+n_runs = 2
+alg = str(sys.argv[1]) # Algorithm, init_source, init_target, sources, [start, end]
 
-target_sizes = [0] + list(range(1000, 10000, 1000)) + list(range(10000, 50000 + 1, 10000))
-target_sizes = list(range(1000, 10000, 1000)) + list(range(10000, 50000 + 1, 10000))
-n_runs = 10
+if alg == 'NoTransfer':
+    del source_tasks, source_policies_rand, source_policies_opt
+    name = 'NoTransfer/NoTransfer'
+    out_stream = open(name + '.log', 'w', buffering=1)
+    learner = ISLearner(gamma, pf, lstd_q, lstd_v, grad_est, None, False, False, False, seed, 'x', 'r')
+    results = learner.learn(target_task, target_sizes, n_runs, None, None, None, out_stream)
+    np.save(name, np.array(results))
+elif alg in ['IS', 'Min', 'Batch']:
+    init_source = sys.argv[2]  # 'r' for random, 'o' for optimal
+    init_target = sys.argv[3]  # 'r' for random, 's' for source
+    assert(init_source in ['r', 'o'] and init_target in ['r', 's'])
+    sources = list(map(int, list(sys.argv[4])))
+    name = init_source + init_target
+    for i in range(len(source_tasks)-1, -1, -1):
+        if i not in sources:
+            del source_tasks[i], source_policies_rand[i], source_policies_opt[i]
+    if alg == 'IS':
+        name = 'IS/IS_' + name
+        learner = ISLearner(gamma, pf, lstd_q, lstd_v, grad_est, None, False, False, False, seed, init_source, init_target)
+    elif alg == 'Min':
+        name = 'Min/Min_' + name
+        if len(sys.argv) > 5:
+            start = int(sys.argv[5])
+            end = int(sys.argv[6])
+            for _ in range(start):
+                np.random.seed(seed)
+                seed = int(np.random.uniform(high=2**32))
+            n_runs = end - start
+            name = name + '_(' + str(start) + '-' + str(end) + ')'
+        learner = ISLearner(gamma, pf, lstd_q, lstd_v, grad_est, weights_est, True, True, True, seed, init_source, init_target)
+    elif alg == 'Batch':
+        name = 'Batch/Batch_' + name
+        learner = BatchLearner(gamma, pf, lstd_q, lstd_v, grad_est, seed, init_source, init_target)
 
-if len(sys.argv) > 1:
-    start = int(sys.argv[1])
-    end = int(sys.argv[2])
-    for _ in range(start):
-        np.random.seed(seed)
-        seed = int(np.random.uniform(high=2**32))
-    n_runs = end - start
-    out_stream = open('IS_mm_full ' + '(' + str(start)+'-'+str(end)+').log', 'w', buffering=1)
-    learner = ISLearner(gamma, pf, lstd_q, lstd_v, grad_est, weights_est, True, True, True, seed)
-    for i in [2, 0]:
-        print("Task:", power_sources[i], file=out_stream)
-        results = learner.learn(target_task, target_sizes, n_runs, [source_tasks[i]], [source_policies[i]], [n_source_samples[i]], out_stream)
-        np.save('learning_app_IS_mm_full_' + str(i + 1) + '('+str(start)+'-'+str(end)+')', np.array(results))
+    out_stream = open(name + '.log', 'w', buffering=1)
+    '''for i in range(len(source_tasks)):
+        print("Task:", source_tasks[i].env.power, file=out_stream)
+        if isinstance(learner, ISLearner):
+            results = learner.learn(target_task, target_sizes, n_runs, [source_tasks[i]],
+                                    [source_policies[i] if init_source == 'r' else source_policies_opt[i]],
+                                    [n_source_samples[i]], out_stream, name + '_' + '{0:.5f}'.format(source_tasks[i].env.power))
+        else:
+            results = learner.learn(target_task, target_sizes, n_runs, [source_tasks[i]],
+                                    [source_policies[i] if init_source == 'r' else source_policies_opt[i]],
+                                    n_source_samples[0], out_stream, name + '_' + '{0:.5f}'.format(source_tasks[i].env.power))
+        np.save(name + '_' + '{0:.5f}'.format(source_tasks[i].env.power), np.array(results))'''
 
     print("All tasks", file=out_stream)
-    results = learner.learn(target_task, target_sizes, n_runs, source_tasks, source_policies, n_source_samples, out_stream)
-    np.save('learning_app_IS_mm_full_all'+'(' + str(start)+'-'+str(end)+')', np.array(results))
-else:
-    n_runs = 10
-    out_stream = sys.stdout#open('IS_m_actor.log', 'a', buffering=1)
-    #print("Min estimator, minimize only bias", file=out_stream)
-    weights_est = MinWeightsEstimator(gamma)
-    learner = ISLearner(gamma, pf, lstd_q, lstd_v, grad_est, weights_est, True, True, True, seed)
-    for i in [2, 1, 0]:
-        print("Task:", power_sources[i], file=out_stream)
-        results = learner.learn(target_task, target_sizes, n_runs, [source_tasks[i]], [source_policies[i]], [n_source_samples[i]], out_stream)
-        np.save('learning_app_IS_m_actor_' + str(i+1), np.array(results))
-
-    print("All tasks", file=out_stream)
-    results = learner.learn(target_task, target_sizes, n_runs, source_tasks, source_policies, n_source_samples, out_stream)
-    np.save('learning_app_IS_m_actor_all', np.array(results))
-
-
-out_stream = open('IS_app_other.log', 'w', buffering=1)
-print("LSTDQ: 3x3x3x0.4, LSTDV 3x3x0.4", file=out_stream)
-learner = ISLearner(gamma, pf, lstd_q, lstd_v, grad_est, None, False, False, False, seed)
-for i in [2,1,0]:
-    print("Task:", power_sources[i], file=out_stream)
-    results = learner.learn(target_task, target_sizes, n_runs, [source_tasks[i]], [source_policies[i]], [n_source_samples[i]], out_stream)
-    np.save('learning_app_IS_other' + str(i+1), np.array(results))
-
-print("All tasks", file=out_stream)
-results = learner.learn(target_task, target_sizes, n_runs, source_tasks, source_policies, n_source_samples, out_stream)
-np.save('learning_app_IS_all_new', np.array(results))
-
-'''out_stream = open('Learning_short.log', 'w', buffering=1)
-learner = ISLearner(gamma, pf, lstd_q, lstd_v, grad_est, None, False, False, False, seed)
-print("No tasks", file=out_stream)
-results = learner.learn(target_task, target_sizes, n_runs, None, None, None, out_stream)
-np.save('learning_short', np.array(results))'''
-
-
-'''out_stream = open('Batch.log', 'w', buffering=1)
-learner = BatchLearner(gamma, pf, lstd_q, lstd_v, grad_est, seed)
-for i in [2,1,0]:
-    print("Task:", power_sources[i], file=out_stream)
-    results = learner.learn(target_task, target_sizes, n_runs, [source_tasks[i]], [source_policies[i]], out_stream)
-    np.save('learning_app_batch_' + str(i+1), np.array(results))
-
-print("All tasks", file=out_stream)
-results = learner.learn(target_task, target_sizes, n_runs, source_tasks, source_policies, out_stream)
-np.save('learning_app_batch_all', np.array(results))'''
+    name = name + '_' + reduce(lambda x, y: x + '_' + y, ['{0:.5f}'.format(st.env.power) for st in source_tasks])
+    if isinstance(learner, ISLearner):
+        results = learner.learn(target_task, target_sizes, n_runs, source_tasks, source_policies_rand if init_source == 'r' else source_policies_opt,
+                                n_source_samples, out_stream, name)
+    else:
+        results = learner.learn(target_task, target_sizes, n_runs, source_tasks, source_policies_rand if init_source == 'r' else source_policies_opt,
+                                n_source_samples[0], out_stream, name)
+    np.save(name, np.array(results))

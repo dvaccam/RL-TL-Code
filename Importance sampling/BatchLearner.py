@@ -4,7 +4,7 @@ import time
 
 
 class BatchLearner:
-    def __init__(self, gamma, policy_factory, q_estimator, v_estimator, gradient_estimator, seed):
+    def __init__(self, gamma, policy_factory, q_estimator, v_estimator, gradient_estimator, seed, init_source, init_target):
         self.gamma = gamma
         self.policy_factory = policy_factory
         self.q_estimator = q_estimator
@@ -12,24 +12,17 @@ class BatchLearner:
         self.gradient_estimator = gradient_estimator
         self.initial_seed = seed
         self.seed = seed
+        self.init_source = init_source
+        self.init_target = init_target
 
 
 
-    def learn(self, target_task, n_target_samples, n_runs=1, source_tasks=None, source_policies=None, out_stream=sys.stdout):
+    def learn(self, target_task, n_target_samples, n_runs=1, source_tasks=None, source_policies=None, n_samples=None,
+              out_stream=sys.stdout, name=None):
         self.seed = self.initial_seed
         self.out_stream = out_stream
-        if self.q_estimator is not None and self.v_estimator is not None:
-            if source_tasks is not None:
-                print("Transfer app", file=self.out_stream)
-            else:
-                print("No transfer app", file=self.out_stream)
-        else:
-            if source_tasks is not None:
-                print("Transfer", file=self.out_stream)
-            else:
-                print("No transfer", file=self.out_stream)
 
-        results = np.zeros((n_runs, len(n_target_samples)), dtype=np.float64)
+        results = np.zeros((n_runs, len(n_target_samples), 2), dtype=np.float64)
         for run_idx in range(n_runs):
             print("Run:", run_idx + 1, file=self.out_stream)
             np.random.seed(self.seed)
@@ -48,7 +41,7 @@ class BatchLearner:
                 phi_source_v = []
                 phi_ns_source_v = []
                 for i in range(len(source_tasks)):
-                    samples = self.collect_samples(source_tasks[i], n_target_samples[-1], source_policies[i])
+                    samples = self.collect_samples(source_tasks[i], n_samples, source_policies[i])
                     source_samples.append(samples)
                     phi_source_q.append(self.q_estimator.map_to_feature_space(samples['fs'], samples['a']))
                     phi_ns_source_q.append(self.q_estimator.map_to_feature_space(samples['ns'], samples['na']))
@@ -63,14 +56,14 @@ class BatchLearner:
                     phi_ns_source_q = None
                     phi_source_v = None
                     phi_ns_source_v = None
-                alpha_1_target_opt, alpha_2_target_opt = \
+                alpha_1_target_opt, alpha_2_target_opt, iters = \
                     self.optimize_policy_parameters(target_size, target_task,
                                                     source_samples, source_tasks, source_policies,
                                                     phi_source_q, phi_ns_source_q, phi_source_v, phi_ns_source_v)
                 optimal_pi = self.policy_factory.create_policy(alpha_1_target_opt, alpha_2_target_opt)
                 target_task.env.set_policy(optimal_pi, self.gamma)
                 J1_opt = target_task.env.J
-                results[run_idx, size_idx] = J1_opt
+                results[run_idx, size_idx] = J1_opt, iters
                 print("Ended at:", [alpha_1_target_opt, alpha_2_target_opt], "J:", J1_opt, file=self.out_stream)
 
         return results
@@ -81,16 +74,30 @@ class BatchLearner:
                                    source_policies=None,
                                    phi_source_q=None, phi_ns_source_q=None, phi_source_v=None, phi_ns_source_v=None):
         step_size = 0.01
-        max_iters = 2000
+        max_iters = 20
         iter = 1
         np.random.seed(self.seed)
         grad = np.zeros(2, dtype=np.float64)
         grad_norm = 1.
-        alpha1 = np.random.uniform()
-        alpha2 = np.random.uniform()
+        if self.init_target == 'r':
+            alpha1 = np.random.uniform()
+            alpha2 = np.random.uniform()
+        else:
+            closest = np.argmin(np.abs(np.array([st.env.power for st in source_tasks]) - target_task.env.power))
+            alpha1 = source_policies[closest].alpha1
+            alpha2 = source_policies[closest].alpha2
         print("Starting point:", [alpha1, alpha2], file=self.out_stream)
+        m = 0.
+        v = 0.
+        m_tilde = grad.copy()
+        v_tilde = grad.copy()
+        beta_1 = 0.9
+        beta_2 = 0.999
+        eps = 1e-8
 
         while grad_norm > 1e-3 and iter <= max_iters:
+            if target_size == 0:
+                break
             alpha1 += step_size * grad[0]
             alpha2 += step_size * grad[1]
             alpha1 = max(min(alpha1, 1.0), 0.0)
@@ -173,13 +180,21 @@ class BatchLearner:
                                                                  Q=Qs, V=Vs)
             grad *= np.array([(0 < alpha1 < 1) or ((alpha1 < 1 or grad[0] < 0) and (alpha1 > 0 or grad[0] > 0)),
                               (0 < alpha2 < 1) or ((alpha2 < 1 or grad[1] < 0) and (alpha2 > 0 or grad[1] > 0))])
+            m = beta_1 * m + (1. - beta_1) * grad
+            v = beta_2 * v + (1. - beta_2) * (grad ** 2)
+            m_tilde = m / (1. - beta_1 ** iter)
+            v_tilde = v / (1. - beta_2 ** iter)
+            grad = (m_tilde / (np.sqrt(v_tilde) + eps))
             grad_norm = np.linalg.norm(grad)
-            grad /= np.linalg.norm(grad, ord=np.inf) if grad_norm != 0. else 1.
+            if iter % 40 == 0:
+                print(iter)
+                sys.stdout.flush()
             iter += 1
             step_size -= (0.01 - 0.001) / max_iters
+        print("Finished at", iter - 1, "iterations", file=self.out_stream)
         if iter > max_iters:
-            print("Did not converge;", grad_norm, iter, file=self.out_stream)
-        return alpha1, alpha2
+            print("Did not converge;", grad_norm, file=self.out_stream)
+        return alpha1, alpha2, iter-1
 
 
 
