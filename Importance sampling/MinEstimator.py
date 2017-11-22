@@ -446,9 +446,17 @@ class MinWeightsEstimator():
                                         (all_phi_Q_rsp[state_sorted, action_sorted] -
                                          self.gamma * all_phi_Q_rsp[next_state_sorted, next_action_sorted]), groups, axis=0)
                 self.source_samples[j]['var_phi_q_sq'] = self.source_samples[j]['var_phi_q'] ** 2
-
+                '''self.B_mat_A_q = 0.
+                for k in range(self.n_features_q):
+                    curr_mat = self.source_samples[j]['var_phi_q'][:,k,:]
+                    self.B_mat_A_q += np.einsum('ij,ik->jk', curr_mat.T, curr_mat.T) + \
+                                      np.diag(((curr_mat**2)/self.source_samples[0]['grp_szs_q'][:,None]).sum(axis=1)) - \
+                                      np.einsum('ij,ik->jk', curr_mat.T, curr_mat.T)/self.source_sizes[0]'''
                 self.source_samples[j]['rho_q'] = \
                     np.add.reduceat(all_phi_Q_rsp[state_sorted, action_sorted] * source_samples[j]['r'][sorted_idx, None], groups, axis=0)
+                '''self.B_mat_b_q = np.einsum('ij,ik->jk', self.source_samples[j]['rho_q'].T, self.source_samples[j]['rho_q'].T) + \
+                                 np.diag(((self.source_samples[j]['rho_q']**2)/self.source_samples[0]['grp_szs_q'][:,None]).sum(axis=1)) - \
+                                 np.einsum('ij,ik->jk', self.source_samples[j]['rho_q'].T, self.source_samples[j]['rho_q'].T)/self.source_sizes[0]'''
 
             if self.for_LSTDV:
                 groups = np.logical_or.reduce((state_groups, action_groups, next_state_groups))
@@ -466,8 +474,18 @@ class MinWeightsEstimator():
                                         (all_phi_V[state_sorted] - self.gamma * all_phi_V[next_state_sorted]), groups, axis=0)
                 self.source_samples[j]['var_phi_v_sq'] = self.source_samples[j]['var_phi_v'] ** 2
 
+                '''self.B_mat_A_v = 0.
+                for k in range(self.n_features_v):
+                    curr_mat = self.source_samples[j]['var_phi_v'][:, k, :]
+                    self.B_mat_A_v += np.einsum('ij,ik->jk', curr_mat.T, curr_mat.T) + \
+                                      np.diag(((curr_mat ** 2) / self.source_samples[0]['grp_szs_v'][:, None]).sum(axis=1)) - \
+                                      np.einsum('ij,ik->jk', curr_mat.T, curr_mat.T) / self.source_sizes[0]'''
+
                 self.source_samples[j]['rho_v'] = \
                     np.add.reduceat(all_phi_V[state_sorted] * source_samples[j]['r'][sorted_idx, None], groups, axis=0)
+                '''self.B_mat_b_v = np.einsum('ij,ik->jk', self.source_samples[j]['rho_v'].T, self.source_samples[j]['rho_v'].T) + \
+                                 np.diag(((self.source_samples[j]['rho_v'] ** 2) / self.source_samples[0]['grp_szs_v'][:, None]).sum(axis=1)) - \
+                                 np.einsum('ij,ik->jk', self.source_samples[j]['rho_v'].T, self.source_samples[j]['rho_v'].T) / self.source_sizes[0]'''
 
         if self.for_gradient:
             self.l_bounds_grad = np.zeros(self.reduced_source_sizes_grad.sum(), dtype=np.float64)
@@ -607,6 +625,11 @@ class MinWeightsEstimator():
                                                 (self.source_sizes[j] * (1. - self.gamma))) / n
                 vari += ((((w[reduced_w_idx[j]:reduced_w_idx[j + 1]][:, None] * self.source_samples[j]['eta_1']) ** 2) / self.source_samples[j]['grp_szs_grad'][:,None]).sum(axis=0) -
                          ((w[reduced_w_idx[j]:reduced_w_idx[j + 1]][:, None] * self.source_samples[j]['eta_1']).sum(axis=0)) ** 2 / self.source_sizes[j]) / (n * (1. - self.gamma)) ** 2
+            #ax = (-2.*self.source_sizes.sum()/((1-self.gamma)*n**2))*target_grad.dot(self.source_samples[0]['eta_1'].T).dot(w) +\
+            #     w.dot((1/(n*(1-self.gamma))**2)*(np.einsum('ij,ik->jk', self.source_samples[0]['eta_1'].T, self.source_samples[0]['eta_1'].T) +
+            #                                      np.diag(((self.source_samples[0]['eta_1']**2)/self.source_samples[0]['grp_szs_grad'][:,None]).sum(axis=1)) -
+            #                                      np.einsum('ij,ik->jk', self.source_samples[0]['eta_1'].T, self.source_samples[0]['eta_1'].T)/self.source_sizes[0])).dot(w) +\
+            #     ((self.source_sizes.sum()/n)**2)*(target_grad**2).sum()
             bias_sq = (bias ** 2).sum()
             vari = vari.sum()
             return bias_sq + vari
@@ -619,8 +642,13 @@ class MinWeightsEstimator():
                     2 * self.source_samples[j]['eta_1'] * (-bias_n / (1. - self.gamma))/n**2
                 grad[reduced_w_idx[j]:reduced_w_idx[j + 1]] +=\
                     2 * self.source_samples[j]['eta_1'] *(self.source_samples[j]['eta_1'] * w[reduced_w_idx[j]:reduced_w_idx[j + 1]][:,None] / (self.source_samples[j]['grp_szs_grad'][:,None]*(1. - self.gamma) ** 2) -
-                                                          (self.source_samples[j]['eta_1'] * w[reduced_w_idx[j]:reduced_w_idx[j + 1]][:,None]).sum() / (self.source_sizes[j] * (1. - self.gamma) ** 2))\
+                                                          (self.source_samples[j]['eta_1'] * w[reduced_w_idx[j]:reduced_w_idx[j + 1]][:,None]).sum(axis=0) / (self.source_sizes[j] * (1. - self.gamma) ** 2))\
                     / n ** 2
+                #ax = (-2.*self.source_sizes.sum()/((1-self.gamma)*n**2))*target_grad.dot(self.source_samples[0]['eta_1'].T) +\
+                #     ((2/(n*(1-self.gamma))**2)*(np.einsum('ij,ik->jk', self.source_samples[0]['eta_1'].T, self.source_samples[0]['eta_1'].T) +
+                #                                 np.diag((self.source_samples[0]['eta_1']**2/self.source_samples[0]['grp_szs_grad'][:,None]).sum(axis=1)) -
+                #                                 np.einsum('ij,ik->jk', self.source_samples[0]['eta_1'].T, self.source_samples[0]['eta_1'].T)/self.source_sizes[0])).dot(w)
+
             grad = grad.sum(axis=1)
             return grad
 
@@ -674,6 +702,11 @@ class MinWeightsEstimator():
             vari_A = vari_A.sum()
             bias_b_sq = (bias_b ** 2).sum()
             vari_b = vari_b.sum()
+            '''ax = (-2.*self.source_sizes.sum()/n**2)*(target_A[None,:,:]*self.source_samples[0]['var_phi_q']).sum(axis=(1,2)).dot(w) +\
+                 w.dot((1/n**2)*self.B_mat_A_q).dot(w) + ((self.source_sizes.sum()/n)**2)*(target_A**2).sum() + \
+                 (-2. * self.source_sizes.sum() / n ** 2) * (target_b.dot(self.source_samples[0]['rho_q'].T)).dot(w) + \
+                 w.dot((1 / n ** 2) * self.B_mat_b_q).dot(w) + ((self.source_sizes.sum() / n) ** 2) * (target_b ** 2).sum()
+            return ax'''
             return bias_A_sq + bias_b_sq + vari_A + vari_b
 
         def grad_g(w):
@@ -694,6 +727,11 @@ class MinWeightsEstimator():
                                                                  (self.source_samples[j]['rho_q'] * (w[reduced_w_idx[j]:reduced_w_idx[j + 1]] / self.source_samples[j]['grp_szs_q'])[:, None] -
                                                                  (self.source_samples[j]['rho_q'] * w[reduced_w_idx[j]:reduced_w_idx[j + 1]][:, None]).sum(axis=0) / self.source_sizes[j])
             grad = grad_A.sum(axis=(1, 2)) + grad_b.sum(axis=1)
+            '''ax = (-2.*self.source_sizes.sum()/n**2)*(target_A[None,:,:]*self.source_samples[0]['var_phi_q']).sum(axis=(1,2)) + \
+                 ((2 / n ** 2) * self.B_mat_A_q).dot(w) + \
+                 (-2. * self.source_sizes.sum() / n ** 2) * (target_b.dot(self.source_samples[0]['rho_q'].T)) + \
+                 ((2 / n ** 2) * self.B_mat_b_q).dot(w)
+            return ax'''
             return grad
 
         bounds = np.ones((self.l_bounds_lstdq.size + self.u_bounds_lstdq.size,), dtype=np.float64)
@@ -745,6 +783,11 @@ class MinWeightsEstimator():
             vari_A = vari_A.sum()
             bias_b_sv = (bias_b ** 2).sum()
             vari_b = vari_b.sum()
+            '''ax = (-2. * self.source_sizes.sum() / n ** 2) * (target_A[None, :, :] * self.source_samples[0]['var_phi_v']).sum(axis=(1, 2)).dot(w) + \
+                 w.dot((1 / n ** 2) * self.B_mat_A_v).dot(w) + ((self.source_sizes.sum() / n) ** 2) * (target_A ** 2).sum() + \
+                 (-2. * self.source_sizes.sum() / n ** 2) * (target_b.dot(self.source_samples[0]['rho_v'].T)).dot(w) + \
+                 w.dot((1 / n ** 2) * self.B_mat_b_v).dot(w) + ((self.source_sizes.sum() / n) ** 2) * (target_b ** 2).sum()
+            return ax'''
             return bias_A_sv + bias_b_sv + vari_A + vari_b
 
         def grad_g(w):
@@ -765,6 +808,11 @@ class MinWeightsEstimator():
                                                                  (self.source_samples[j]['rho_v'] * (w[reduced_w_idx[j]:reduced_w_idx[j + 1]] / self.source_samples[j]['grp_szs_v'])[:, None] -
                                                                   (self.source_samples[j]['rho_v'] * w[reduced_w_idx[j]:reduced_w_idx[j + 1]][:, None]).sum(axis=0) / self.source_sizes[j])
             grad = grad_A.sum(axis=(1, 2)) + grad_b.sum(axis=1)
+            '''ax = (-2. * self.source_sizes.sum() / n ** 2) * (target_A[None, :, :] * self.source_samples[0]['var_phi_v']).sum(axis=(1, 2)) + \
+                 ((2 / n ** 2) * self.B_mat_A_v).dot(w) + \
+                 (-2. * self.source_sizes.sum() / n ** 2) * (target_b.dot(self.source_samples[0]['rho_v'].T)) + \
+                 ((2 / n ** 2) * self.B_mat_b_v).dot(w)
+            return ax'''
             return grad
 
         bounds = np.ones((self.l_bounds_lstdv.size + self.u_bounds_lstdv.size,), dtype=np.float64)

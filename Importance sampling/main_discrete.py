@@ -220,7 +220,7 @@ elif alg in ['IS', 'Min', 'Batch']:
         learner = ISLearner(gamma, pf, lstd_q, lstd_v, grad_est, None, False, False, False, seed, init_source, init_target)
     elif alg == 'Min':
         name = folder + '/Min_' + name
-        if len(sys.argv) > 5:
+        if len(sys.argv) > 6:
             start = int(sys.argv[6])
             end = int(sys.argv[7])
             for _ in range(start):
