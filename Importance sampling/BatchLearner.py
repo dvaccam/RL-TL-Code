@@ -74,7 +74,7 @@ class BatchLearner:
                                    source_policies=None,
                                    phi_source_q=None, phi_ns_source_q=None, phi_source_v=None, phi_ns_source_v=None):
         step_size = 0.01
-        max_iters = 20
+        max_iters = 2000
         iter = 1
         np.random.seed(self.seed)
         grad = np.zeros(2, dtype=np.float64)

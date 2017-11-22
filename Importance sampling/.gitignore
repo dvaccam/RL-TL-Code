@@ -1,6 +1,7 @@
 /.idea
 /__pycache__
 /*
+!/gym
 !.gitignore
 !main.py
 !main_discrete.py

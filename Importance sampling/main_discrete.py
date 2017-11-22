@@ -20,6 +20,7 @@ import threading as thr
 import sys
 from itertools import compress
 from functools import reduce
+import os
 
 
 
@@ -192,34 +193,36 @@ plt.close()'''
 
 
 target_sizes = [0] + list(range(100, 1000, 100)) + list(range(1000, 10000+1, 1000))
-target_sizes = [0,10]
-n_runs = 2
-alg = str(sys.argv[1]) # Algorithm, init_source, init_target, sources, [start, end]
+n_runs = 5
+alg = str(sys.argv[1]) # Algorithm, folder, init_source, init_target, sources, [start, end]
+folder = sys.argv[2]
+if not os.path.exists(folder):
+    os.makedirs(folder)
 
 if alg == 'NoTransfer':
     del source_tasks, source_policies_rand, source_policies_opt
-    name = 'NoTransfer/NoTransfer'
+    name = folder + '/NoTransfer'
     out_stream = open(name + '.log', 'w', buffering=1)
     learner = ISLearner(gamma, pf, lstd_q, lstd_v, grad_est, None, False, False, False, seed, 'x', 'r')
     results = learner.learn(target_task, target_sizes, n_runs, None, None, None, out_stream)
     np.save(name, np.array(results))
 elif alg in ['IS', 'Min', 'Batch']:
-    init_source = sys.argv[2]  # 'r' for random, 'o' for optimal
-    init_target = sys.argv[3]  # 'r' for random, 's' for source
+    init_source = sys.argv[3]  # 'r' for random, 'o' for optimal
+    init_target = sys.argv[4]  # 'r' for random, 's' for source
     assert(init_source in ['r', 'o'] and init_target in ['r', 's'])
-    sources = list(map(int, list(sys.argv[4])))
+    sources = list(map(int, list(sys.argv[5])))
     name = init_source + init_target
     for i in range(len(source_tasks)-1, -1, -1):
         if i not in sources:
             del source_tasks[i], source_policies_rand[i], source_policies_opt[i]
     if alg == 'IS':
-        name = 'IS/IS_' + name
+        name = folder + '/IS_' + name
         learner = ISLearner(gamma, pf, lstd_q, lstd_v, grad_est, None, False, False, False, seed, init_source, init_target)
     elif alg == 'Min':
-        name = 'Min/Min_' + name
+        name = folder + '/Min_' + name
         if len(sys.argv) > 5:
-            start = int(sys.argv[5])
-            end = int(sys.argv[6])
+            start = int(sys.argv[6])
+            end = int(sys.argv[7])
             for _ in range(start):
                 np.random.seed(seed)
                 seed = int(np.random.uniform(high=2**32))
@@ -227,28 +230,29 @@ elif alg in ['IS', 'Min', 'Batch']:
             name = name + '_(' + str(start) + '-' + str(end) + ')'
         learner = ISLearner(gamma, pf, lstd_q, lstd_v, grad_est, weights_est, True, True, True, seed, init_source, init_target)
     elif alg == 'Batch':
-        name = 'Batch/Batch_' + name
+        name = folder + '/Batch_' + name
         learner = BatchLearner(gamma, pf, lstd_q, lstd_v, grad_est, seed, init_source, init_target)
 
-    out_stream = open(name + '.log', 'w', buffering=1)
-    '''for i in range(len(source_tasks)):
+    out_stream = open(name + '.log', 'a', buffering=1)
+    for i in range(len(source_tasks)):
         print("Task:", source_tasks[i].env.power, file=out_stream)
         if isinstance(learner, ISLearner):
             results = learner.learn(target_task, target_sizes, n_runs, [source_tasks[i]],
-                                    [source_policies[i] if init_source == 'r' else source_policies_opt[i]],
+                                    [source_policies_rand[i] if init_source == 'r' else source_policies_opt[i]],
                                     [n_source_samples[i]], out_stream, name + '_' + '{0:.5f}'.format(source_tasks[i].env.power))
         else:
             results = learner.learn(target_task, target_sizes, n_runs, [source_tasks[i]],
-                                    [source_policies[i] if init_source == 'r' else source_policies_opt[i]],
+                                    [source_policies_rand[i] if init_source == 'r' else source_policies_opt[i]],
                                     n_source_samples[0], out_stream, name + '_' + '{0:.5f}'.format(source_tasks[i].env.power))
-        np.save(name + '_' + '{0:.5f}'.format(source_tasks[i].env.power), np.array(results))'''
+        np.save(name + '_' + '{0:.5f}'.format(source_tasks[i].env.power), np.array(results))
 
-    print("All tasks", file=out_stream)
-    name = name + '_' + reduce(lambda x, y: x + '_' + y, ['{0:.5f}'.format(st.env.power) for st in source_tasks])
-    if isinstance(learner, ISLearner):
-        results = learner.learn(target_task, target_sizes, n_runs, source_tasks, source_policies_rand if init_source == 'r' else source_policies_opt,
-                                n_source_samples, out_stream, name)
-    else:
-        results = learner.learn(target_task, target_sizes, n_runs, source_tasks, source_policies_rand if init_source == 'r' else source_policies_opt,
-                                n_source_samples[0], out_stream, name)
-    np.save(name, np.array(results))
+    if len(source_tasks) > 1:
+        print("All tasks", file=out_stream)
+        name = name + '_' + reduce(lambda x, y: x + '_' + y, ['{0:.5f}'.format(st.env.power) for st in source_tasks])
+        if isinstance(learner, ISLearner):
+            results = learner.learn(target_task, target_sizes, n_runs, source_tasks, source_policies_rand if init_source == 'r' else source_policies_opt,
+                                    n_source_samples, out_stream, name)
+        else:
+            results = learner.learn(target_task, target_sizes, n_runs, source_tasks, source_policies_rand if init_source == 'r' else source_policies_opt,
+                                    n_source_samples[0], out_stream, name)
+        np.save(name, np.array(results))
