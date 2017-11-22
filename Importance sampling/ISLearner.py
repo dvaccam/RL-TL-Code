@@ -135,7 +135,7 @@ class ISLearner:
             ess_critic_q = None
             ess_actor = None
 
-        while grad_norm > 1e-3 and iter <= max_iters:
+        while grad_norm > 1e-2 and iter <= max_iters:
             alpha1 += step_size * grad[0]
             alpha2 += step_size * grad[1]
             alpha1 = max(min(alpha1, 1.0), 0.0)
